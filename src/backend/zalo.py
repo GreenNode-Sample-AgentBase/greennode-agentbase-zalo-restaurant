@@ -59,7 +59,12 @@ def parse_webhook(payload: dict) -> dict | None:
 
     Trả None nếu không phải tin nhắn văn bản (image/sticker/voice/unsupported).
     """
-    result = payload.get("result") or payload.get("data") or {}
+    # Zalo thực tế gửi event_name/message ở TOP-LEVEL (docs ghi nested trong "result" —
+    # thực tế khi setWebhook thì payload = {"event_name": ..., "message": {...}})
+    if "event_name" in payload:
+        result = payload
+    else:
+        result = payload.get("result") or payload.get("data") or {}
     event_name = result.get("event_name") or result.get("eventName") or ""
     if "message.text" not in event_name:
         return None
