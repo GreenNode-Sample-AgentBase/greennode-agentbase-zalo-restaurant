@@ -1,5 +1,8 @@
 # 🍜 Zalo Restaurant Bot — "Quán Ngon 123" (remembers returning guests)
 
+[![CI](https://github.com/GreenNode-Sample-AgentBase/greennode-agentbase-zalo-restaurant/actions/workflows/ci.yml/badge.svg)](https://github.com/GreenNode-Sample-AgentBase/greennode-agentbase-zalo-restaurant/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 > An **end-to-end** sample on **GreenNode AgentBase**: Agent Runtime + **custom MCP server running as its own runtime** + **MCP Gateway** (IAM + Policy) + **CUSTOM Memory** (guest profiles) + the **Zalo Bot Platform** (real webhook) + a **Web Simulator**.
 
 📚 [Interactive architecture diagram](docs/architecture.html)
@@ -41,8 +44,8 @@ flowchart LR
     G -->|NONE outbound| MCP[restaurant-mcp-server<br/>separate runtime · 7 tools]
 ```
 
-- **`src/mcp-server`** — a FastMCP server (stateless HTTP) with 7 restaurant tools: `get_menu`, `check_availability`, `create_booking`, `list_bookings`, `cancel_booking`, `get_loyalty`, `add_loyalty_points` — **deployed as its own AgentBase runtime**, exposed through the gateway via the `restaurant` connector (outbound **NONE**).
-- **`src/backend`** — LangGraph agent + Memory (1 **CUSTOM** strategy "customer-profile") + the Zalo webhook (secret verification, retry dedupe, replies with `parse_mode=markdown`).
+- **`src/mcp-server`** — a FastMCP server (stateless HTTP) with 7 restaurant tools: `get_menu`, `check_availability`, `create_booking`, `list_bookings`, `cancel_booking`, `get_loyalty`, `add_loyalty_points` — **deployed as its own AgentBase runtime**, exposed through the gateway via the `restaurant` connector (outbound **NONE**). Bookings and loyalty points are persisted in **SQLite** (`MCP_DB_PATH`, default `data/restaurant.db`) — restarting the runtime does **not** lose data.
+- **`src/backend`** — LangGraph agent + Memory (1 **CUSTOM** strategy "customer-profile") + the Zalo webhook (**ack 200 immediately, LLM turn runs in a background thread** — Zalo never waits on the LLM; secret verification, retry dedupe, replies with `parse_mode=markdown` cut cleanly at the 2000-char limit).
 - **Policy** — `sample-gw-policy`: the zalo-bot may call only the 7 `restaurant__*` actions; travel-buddy (a separate sample repo) only `tavily__*`; everything else is **denied by default**.
 
 ## 📁 Layout
@@ -115,6 +118,9 @@ API: `PATCH /gateway/api/v1/gateways/sample-mcp-gw {"targets":[…,{"name":"rest
 | `ZALO_WEBHOOK_SECRET` | recommended | verifies the `X-Bot-Api-Secret-Token` header |
 | `ZALO_API_BASE` | default | `https://bot-api.zaloplatforms.com` |
 | `SERVE_UI` | default `true` | `false` → disable the Web Simulator on the endpoint (Zalo-first mode) |
+| `AGENT_API_KEY` | optional | if set, `/invocations` + `/api/*` require the `X-API-Key` header (the webhook uses its own Zalo secret and is never blocked) |
+| `DEBUG_OPS` | default `0` | `1` enables the `{"op":"whoami"}` identity op — only while setting up policies |
+| `MCP_DB_PATH` | default `data/restaurant.db` | SQLite path for the MCP server (bookings/loyalty persistence) |
 
 ## 🔌 API contract
 
@@ -126,6 +132,7 @@ API: `PATCH /gateway/api/v1/gateways/sample-mcp-gw {"targets":[…,{"name":"rest
 | GET | `/api/memory?actor=` · `/api/history` · `/api/actors` | guest profile · conversation · known guests |
 | GET | `/api/bookings` | calls the MCP `list_bookings` tool directly |
 | GET | `/api/info` · `/health` | config (includes `zalo_configured`, bot name) |
+| GET | `/ready` | deep readiness: memory + gateway + LLM + Zalo (200 ok / 503 degraded) |
 
 ## ✅ Verified end-to-end (demo account)
 
@@ -133,6 +140,20 @@ API: `PATCH /gateway/api/v1/gateways/sample-mcp-gw {"targets":[…,{"name":"rest
 - Hung (no-spicy) → table T3 · Lan (vegetarian, 6 guests, T7) → booking created; a new session later → the bot recalls the profile exactly.
 - Webhook: correct secret → processed + replied (`sent` reflects a real Zalo send); wrong secret → **403**; `setWebhook` returned `verification.ok = true`.
 - Policy: an unknown token calling the gateway → *"Request denied by policy."*
+
+## 🛡️ Production hardening
+
+| Guard | How |
+|---|---|
+| **Fast webhook ack** | the webhook returns `200` instantly and processes the LLM turn in a background thread — Zalo never times out or retries while the LLM is thinking |
+| **Retry-safe dedupe** | `message_id` is marked seen *before* processing, so a Zalo retry during a slow turn is still dropped |
+| **Zalo secret** | `X-Bot-Api-Secret-Token` is verified on every event; wrong secret → `403` |
+| **Zalo-first mode** | `SERVE_UI=false` disables the web simulator on the endpoint — guests interact only in Zalo |
+| **API key on REST** | set `AGENT_API_KEY` → `/invocations` + `/api/*` require `X-API-Key` (the webhook is exempt — it has its own secret) |
+| **Hide runtime identity** | keep `DEBUG_OPS=0` (default) — `whoami` is disabled after policy setup |
+| **Data persistence** | the MCP server stores bookings/loyalty in SQLite — runtime restarts keep data |
+| **Clean 2000-char replies** | long replies are cut at paragraph/line boundaries (never mid-markdown) with a "(…còn tiếp)" note |
+| **Context budget** | history trimmed to the last 40 messages; gateway calls retry with backoff; `recall` degrades gracefully |
 
 ## 💰 Cost & teardown
 

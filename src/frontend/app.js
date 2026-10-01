@@ -93,8 +93,19 @@ function hideToast() {
   clearTimeout(toastTimer);
 }
 
+/* API key (khi backend bật AGENT_API_KEY) — lưu localStorage, tự đính kèm mọi request */
+const KEY_STORAGE = 'zalo_bot_api_key';
+function authHeaders(extra = {}) {
+  const h = Object.assign({}, extra);
+  let k = '';
+  try { k = localStorage.getItem(KEY_STORAGE) || ''; } catch (e) { /* private mode */ }
+  if (k) h['X-API-Key'] = k;
+  return h;
+}
+
 /* fetchJson: wrapper cho fetch — bắn lỗi tiếng Việt dễ hiểu để đưa lên toast */
 async function fetchJson(url, options = {}) {
+  options.headers = authHeaders(options.headers || {});
   let res;
   try {
     res = await fetch(url, options);

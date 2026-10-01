@@ -8,11 +8,14 @@ IAM Bearer token lấy từ GREENNODE_CLIENT_ID / GREENNODE_CLIENT_SECRET
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
 
 import httpx
+
+logger = logging.getLogger("mcp-client")
 
 IAM_TOKEN_URL = "https://iam.api.vngcloud.vn/accounts-api/v2/auth/token"
 
@@ -61,6 +64,34 @@ def _jwt_exp(token: str) -> float:
         return 0.0
 
 
+_TRANSIENT = (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout)
+
+
+def _post_with_retry(client: httpx.Client, mcp_url: str, headers: dict, body: dict,
+                     method: str, attempts: int = 3) -> httpx.Response:
+    """POST với retry/backoff cho lỗi tạm thời.
+
+    - ConnectError/ConnectTimeout: request CHƯA tới server → an toàn retry mọi method.
+    - 5xx/ReadTimeout: chỉ retry với method idempotent (tools/list).
+    """
+    delay = 0.5
+    last_exc: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return client.post(mcp_url, headers=headers, json=body)
+        except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            last_exc = e
+        except httpx.ReadTimeout as e:
+            if method != "tools/list":
+                raise
+            last_exc = e
+        if attempt < attempts:
+            logger.warning("%s transient (%s) — retry %d/%d sau %.1fs", method, last_exc, attempt, attempts, delay)
+            time.sleep(delay)
+            delay *= 3
+    raise last_exc  # type: ignore[misc]
+
+
 def mcp_request(
     mcp_url: str, method: str, params: dict | None = None
 ) -> tuple[int, dict | str]:
@@ -82,10 +113,18 @@ def mcp_request(
         "Accept": "application/json, text/event-stream",
     }
     with httpx.Client(timeout=120) as client:
-        r = client.post(mcp_url, headers=headers, json=body)
+        r = _post_with_retry(client, mcp_url, headers, body, method)
         if r.status_code == 401:  # token hết hạn → refresh 1 lần rồi retry
             headers["Authorization"] = f"Bearer {get_token(force=True)}"
-            r = client.post(mcp_url, headers=headers, json=body)
+            r = _post_with_retry(client, mcp_url, headers, body, method)
+        elif r.status_code >= 500 and method == "tools/list":
+            delay = 0.5
+            for _attempt in range(2):  # 5xx với tools/list → retry thêm 2 lần
+                time.sleep(delay)
+                r = _post_with_retry(client, mcp_url, headers, body, method)
+                if r.status_code < 500:
+                    break
+                delay *= 3
 
     if r.status_code != 200:
         return r.status_code, r.text[:2000]

@@ -16,9 +16,12 @@ Endpoints:
 from __future__ import annotations
 
 import json
+import logging
 import os
+import threading
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -36,17 +39,58 @@ from memory_tools import run_coro
 import zalo
 from mcp_client import mcp_request
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s | %(message)s",
+)
+logger = logging.getLogger("zalo-restaurant-bot")
+
 app = GreenNodeAgentBaseApp()
 
 MEMORY_ID = os.environ.get("AGENTBASE_MEMORY_ID", "")
 MCP_RESTAURANT_URL = os.environ.get("MCP_RESTAURANT_URL", "")
 LLM_MODEL = os.environ.get("LLM_MODEL", "")
+LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
+# AGENT_API_KEY (optional): bảo vệ REST API trong production (webhook dùng secret riêng)
+AGENT_API_KEY = os.environ.get("AGENT_API_KEY", "").strip()
+# DEBUG_OPS=1: bật op whoami (lộ identity runtime — chỉ dùng lúc setup policy)
+DEBUG_OPS = os.environ.get("DEBUG_OPS", "0").strip() in ("1", "true", "yes")
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+TZ_VN = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
 def _now() -> str:
-    return datetime.now().isoformat()
+    return datetime.now(TZ_VN).isoformat()
+
+
+# ── API-key middleware: bảo vệ /invocations + /api/* (trừ /api/info) ──
+class ApiKeyMiddleware:
+    """Pure-ASGI middleware. Không đặt AGENT_API_KEY → mở (local dev).
+    /webhook/zalo KHÔNG bị chặn (dùng X-Bot-Api-Secret-Token riêng của Zalo)."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and AGENT_API_KEY:
+            path = scope.get("path", "")
+            protected = path == "/invocations" or (
+                path.startswith("/api/") and path != "/api/info"
+            )
+            if protected:
+                headers = {
+                    k.decode("latin-1").lower(): v.decode("latin-1")
+                    for k, v in scope.get("headers", [])
+                }
+                if headers.get("x-api-key") != AGENT_API_KEY:
+                    resp = JSONResponse(
+                        {"status": "error", "error": "Unauthorized — thiếu/sai header X-API-Key"},
+                        status_code=401,
+                    )
+                    await resp(scope, receive, send)
+                    return
+        await self.app(scope, receive, send)
 
 
 def _get_user_id(context) -> str:
@@ -101,6 +145,11 @@ async def _chat_turn(actor_id: str, session_id: str, message: str) -> dict:
 @app.entrypoint
 def handler(payload: dict, context: RequestContext) -> dict:
     if payload.get("op") == "whoami":
+        if not DEBUG_OPS:
+            return {
+                "status": "error",
+                "error": "whoami bị tắt. Set DEBUG_OPS=1 (chỉ dùng lúc setup policy) rồi restart runtime.",
+            }
         return {"status": "success", "agent": "zalo-restaurant-bot", **agent_mod.whoami()}
     user_id = _get_user_id(context)
     if not user_id or not context.session_id:
@@ -139,26 +188,48 @@ async def _webhook_post(request: Request) -> JSONResponse:
     if not zalo.webhook_secret_ok(request.headers.get("X-Bot-Api-Secret-Token", "")):
         return JSONResponse({"status": "denied"}, status_code=403)
 
-    print(f"[zalo-webhook] POST received, body keys: {list(payload.keys())}", flush=True)
+    logger.info("webhook POST received, body keys: %s", list(payload.keys()))
     try:
         ev = zalo.parse_webhook(payload)
     except Exception as e:
-        print(f"[zalo-webhook] parse error: {e}", flush=True)
+        logger.warning("webhook parse error: %s", e)
         return JSONResponse({"status": "ignored", "reason": f"parse error: {e}"})
     if not ev:
-        print(f"[zalo-webhook] ignored (không phải message.text) — body: {str(payload)[:200]}", flush=True)
+        logger.info("webhook ignored (không phải message.text) — body: %s", str(payload)[:200])
         return JSONResponse({"message": "Success"})  # image/sticker/voice → bỏ qua
     if ev.get("already_seen"):
         return JSONResponse({"message": "Success"})  # Zalo retry trùng → bỏ qua
 
-    actor_id = ev["sender_id"]
-    session_id = f"zalo-{ev['chat_id']}"  # 1 thread liên tục per khách
-    result = run_coro(_chat_turn(actor_id, session_id, ev["text"]))
-    reply = result.get("response") or f"Xin lỗi, có lỗi xảy ra: {result.get('error', 'không rõ')}"
-    send_result = zalo.send_message(ev["chat_id"], reply)
+    # Đánh dấu seen NGAY (trước khi xử lý) — chặn retry trùng trong lúc LLM chạy
     zalo.mark_seen(ev.get("message_id", ""))
-    print(f"[zalo-webhook] replied to {ev['chat_id']} | sent={bool(send_result.get('ok'))} | result={str(send_result)[:200]}", flush=True)
-    return JSONResponse({"message": "Success", "sent": bool(send_result.get("ok"))})
+
+    actor_id = ev["sender_id"]
+    chat_id = ev["chat_id"]
+    text = ev["text"]
+    session_id = f"zalo-{chat_id}"  # 1 thread liên tục per khách
+
+    def _process() -> None:
+        try:
+            result = run_coro(_chat_turn(actor_id, session_id, text))
+            reply = result.get("response") or f"Xin lỗi, có lỗi xảy ra: {result.get('error', 'không rõ')}"
+            send_result = zalo.send_message(chat_id, reply)
+            logger.info(
+                "replied to %s | sent=%s | memories=%s | result=%s",
+                chat_id, bool(send_result.get("ok")), result.get("memories_used"), str(send_result)[:150],
+            )
+        except Exception:
+            logger.exception("webhook processing failed (chat_id=%s)", chat_id)
+            try:
+                zalo.send_message(chat_id, "Xin lỗi quý khách, hệ thống đang bận — vui lòng nhắn lại sau ít phút ạ 🙏")
+            except Exception:
+                pass
+
+    # ACK 200 cho Zalo NGAY LẬP TỨC — turn LLM chạy background (3–10s),
+    # tránh Zalo timeout/retry khi phải chờ LLM trả lời xong.
+    threading.Thread(
+        target=_process, daemon=True, name=f"zalo-msg-{ev.get('message_id', '')[:12]}"
+    ).start()
+    return JSONResponse({"message": "Success", "accepted": True})
 
 
 app.add_route("/webhook/zalo", _webhook_get, methods=["GET"])
@@ -175,6 +246,7 @@ async def _api_info(request: Request) -> JSONResponse:
             "llm_model": LLM_MODEL,
             "zalo_configured": zalo.zalo_configured(),
             "zalo_bot": zalo.bot_name(),
+            "auth_required": bool(AGENT_API_KEY),
         }
     )
 
@@ -250,6 +322,26 @@ async def _api_bookings(request: Request) -> JSONResponse:
         return JSONResponse({"bookings": [], "error": str(e)[:200]})
 
 
+# ── /ready: health check sâu (memory + gateway + zalo) cho ops ──
+async def _ready(request: Request) -> JSONResponse:
+    checks: dict = {}
+    try:
+        memory_tools.list_actors_sync()
+        checks["memory"] = {"ok": True}
+    except Exception as e:
+        checks["memory"] = {"ok": False, "error": str(e)[:150]}
+    try:
+        tools = agent_mod.get_mcp_tools()
+        checks["gateway"] = {"ok": bool(tools), "tools": len(tools)}
+    except Exception as e:
+        checks["gateway"] = {"ok": False, "error": str(e)[:150]}
+    checks["llm"] = {"ok": bool(LLM_API_KEY), "model": LLM_MODEL}
+    checks["zalo"] = {"ok": zalo.zalo_configured(), "bot": zalo.bot_name()}
+    ok = checks["memory"].get("ok") and checks["gateway"].get("ok") and checks["llm"].get("ok")
+    return JSONResponse({"status": "ok" if ok else "degraded", "checks": checks}, status_code=200 if ok else 503)
+
+
+app.add_route("/ready", _ready, methods=["GET"])
 app.add_route("/api/info", _api_info, methods=["GET"])
 app.add_route("/api/memory", _api_memory, methods=["GET"])
 app.add_route("/api/history", _api_history, methods=["GET"])
@@ -271,6 +363,7 @@ async def _root(request: Request) -> JSONResponse:
     )
 
 app.add_route("/", _root, methods=["GET"])
+app.add_middleware(ApiKeyMiddleware)
 if SERVE_UI:
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="ui")
 

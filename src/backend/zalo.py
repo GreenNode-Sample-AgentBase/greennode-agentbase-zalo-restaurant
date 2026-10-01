@@ -85,9 +85,27 @@ def parse_webhook(payload: dict) -> dict | None:
     }
 
 
+ZALO_TEXT_LIMIT = 2000
+
+
+def fit_zalo(text: str, limit: int = ZALO_TEXT_LIMIT) -> str:
+    """Cắt text vừa giới hạn Zalo (2000 chars) tại biên đoạn/dòng SẠCH —
+    không làm vỡ markdown giữa chừng; thêm ghi chú nếu bị cắt."""
+    text = str(text or "")
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 30]
+    # ưu tiên cắt tại hết đoạn (\n\n), rồi xuống dòng, rồi dấu câu
+    for sep in ("\n\n", "\n", ". ", "، ", ", "):
+        idx = cut.rfind(sep)
+        if idx > limit // 2:
+            return text[: idx + len(sep)].rstrip() + "\n\n(…còn tiếp — nhắn \"tiếp\" để xem phần còn lại nhé ạ)"
+    return cut.rstrip() + "…"
+
+
 def send_message(chat_id: str, text: str) -> dict:
     """Gửi tin nhắn văn bản (parse_mode=markdown → bold/list hiển thị đẹp trên Zalo)."""
-    body = {"chat_id": chat_id, "text": text[:2000], "parse_mode": "markdown"}
+    body = {"chat_id": chat_id, "text": fit_zalo(text), "parse_mode": "markdown"}
     with httpx.Client(timeout=20) as c:
         try:
             r = c.post(_api("sendMessage"), json=body)
