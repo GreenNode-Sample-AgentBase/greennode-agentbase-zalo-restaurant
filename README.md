@@ -1,128 +1,128 @@
-# 🍜 Zalo Restaurant Bot — "Quán Ngon 123" (khách-quen có hồ sơ)
+# 🍜 Zalo Restaurant Bot — "Quán Ngon 123" (remembers returning guests)
 
-> Sample **end-to-end** trên **GreenNode AgentBase**: Agent Runtime + **MCP server tùy chỉnh chạy như 1 runtime riêng** + **MCP Gateway** (IAM + Policy) + **Memory CUSTOM** (hồ sơ khách quen) + **Zalo Bot Platform** (webhook thật) + **Web Simulator**.
+> An **end-to-end** sample on **GreenNode AgentBase**: Agent Runtime + **custom MCP server running as its own runtime** + **MCP Gateway** (IAM + Policy) + **CUSTOM Memory** (guest profiles) + the **Zalo Bot Platform** (real webhook) + a **Web Simulator**.
 
-📚 [Sơ đồ kiến trúc tương tác](docs/architecture.html) · 🇻🇳 Tài liệu tiếng Việt
+📚 [Interactive architecture diagram](docs/architecture.html)
 
 ---
 
-## ✨ Trải nghiệm chính — *quán nhớ khách*
+## ✨ The experience — the restaurant *remembers* its guests
 
-| Tình huống | Bot làm gì (tự động) |
+| Situation | What the bot does (automatically) |
 |---|---|
-| "Tôi là Hùng, đặt bàn tối nay 4 người, **không ăn được cay**" | 📋 Check bàn qua **MCP** (`check_availability`) → đề xuất bàn • 🧠 `remember` "Hùng không ăn cay" • xác nhận + `create_booking` |
-| Quay lại bằng **Zalo** (session mới): "Cuối tuần này tôi quay lại quán" | ✨ *"Dạ em nhớ anh Hùng rồi ạ! Lần trước anh ngồi bàn T3, **bếp luôn nêm nếm không cay** cho anh"* — hồ sơ khách từ **Memory CUSTOM strategy** |
-| Người lạ gọi `/webhook/zalo` không có secret | 🔒 **403 Denied** (header `X-Bot-Api-Secret-Token`) |
+| "I'm Hung, book a table tonight for 4, **no spicy food**" | 📋 Checks tables through **MCP** (`check_availability`) → suggests a table • 🧠 `remember` "Hung, non-spicy" • confirms + `create_booking` |
+| Returns later **via Zalo** (new session): "I'll come back this weekend" | ✨ *"Hi Hung! You sat at table T3 last time — the kitchen always cooks non-spicy for you"* — guest profile from the **CUSTOM memory strategy** |
+| Unknown caller hits `/webhook/zalo` without the secret | 🔒 **403 Denied** (`X-Bot-Api-Secret-Token` header) |
 
-**Web Simulator** (`GET /`): giao diện Zalo (khung điện thoại), nhập khách mới, chat, panel **🧠 Hồ sơ khách** + **📋 Đặt bàn hiện có** (đọc trực tiếp từ MCP server).
+The **Web Simulator** (`GET /`): a Zalo-style UI (phone frame), add new guests, chat, plus a **🧠 Guest profile** panel and a **📋 Current bookings** table (read live from the MCP server).
 
-## 🏗 Kiến trúc — 2 runtime, 1 gateway
+## 🏗 Architecture — 2 runtimes, 1 gateway
 
 ```mermaid
 flowchart LR
-    ZU[Khách Zalo] <--> ZB[Zalo Bot Platform<br/>webhook]
+    ZU[Zalo guest] <--> ZB[Zalo Bot Platform<br/>webhook]
     SIM[Web Simulator] --> R[zalo-restaurant-bot<br/>LangGraph :8080]
     ZB -->|POST /webhook/zalo| R
     R -->|sendMessage| ZB
-    R -->|hồ sơ khách| M[(Memory<br/>CUSTOM strategy)]
+    R -->|guest profile| M[(Memory<br/>CUSTOM strategy)]
     R -->|chat completions| L[LLM AIP]
-    R -->|tools/call qua IAM| G{{MCP Gateway<br/>+ Policy}}
-    G -->|NONE outbound| MCP[restaurant-mcp-server<br/>runtime riêng · 7 tools]
+    R -->|tools/call via IAM| G{{MCP Gateway<br/>+ Policy}}
+    G -->|NONE outbound| MCP[restaurant-mcp-server<br/>separate runtime · 7 tools]
 ```
 
-- **`src/mcp-server`** — MCP server FastMCP (stateless HTTP) với 7 tool nghiệp vụ quán: `get_menu`, `check_availability`, `create_booking`, `list_bookings`, `cancel_booking`, `get_loyalty`, `add_loyalty_points` — **deploy thành 1 runtime AgentBase riêng**, gateway trỏ tới qua connector `restaurant` (outbound **NONE**).
-- **`src/backend`** — agent LangGraph + Memory (1 strategy **CUSTOM** "customer-profile") + webhook Zalo (verify secret, chống retry trùng, reply `parse_mode=markdown`).
-- **Policy** — `sample-gw-policy`: zalo-bot chỉ được 7 action `restaurant__*`; travel-buddy (repo mẫu khác) chỉ được `tavily__*`; còn lại **deny mặc định**.
+- **`src/mcp-server`** — a FastMCP server (stateless HTTP) with 7 restaurant tools: `get_menu`, `check_availability`, `create_booking`, `list_bookings`, `cancel_booking`, `get_loyalty`, `add_loyalty_points` — **deployed as its own AgentBase runtime**, exposed through the gateway via the `restaurant` connector (outbound **NONE**).
+- **`src/backend`** — LangGraph agent + Memory (1 **CUSTOM** strategy "customer-profile") + the Zalo webhook (secret verification, retry dedupe, replies with `parse_mode=markdown`).
+- **Policy** — `sample-gw-policy`: the zalo-bot may call only the 7 `restaurant__*` actions; travel-buddy (a separate sample repo) only `tavily__*`; everything else is **denied by default**.
 
-## 📁 Cấu trúc
+## 📁 Layout
 
 ```
-├── src/mcp-server/       # main.py (FastMCP 7 tools) · Dockerfile · requirements.txt
+├── src/mcp-server/       # main.py (FastMCP, 7 tools) · Dockerfile · requirements.txt
 ├── src/backend/          # main.py · agent.py · memory_tools.py · zalo.py · mcp_client.py
 ├── src/frontend/         # simulator (index.html · style.css · app.js)
 ├── docs/architecture.html
 ├── Dockerfile · .env.example
 ```
 
-## 🚀 Chạy local
+## 🚀 Run locally
 
 ```bash
-# 1) MCP server (bắt buộc chạy trước — agent gọi nó)
+# 1) MCP server (must run first — the agent calls it)
 cd src/mcp-server && docker build -t restaurant-mcp . && docker run -p 8081:8080 restaurant-mcp
 # 2) Agent
 cd ../.. && cp .env.example .env   # MCP_RESTAURANT_URL=http://host.docker.internal:8081/mcp
 docker build -t zalo-bot . && docker run -p 8080:8080 --env-file .env zalo-bot
-# mở http://localhost:8080 (simulator)
+# open http://localhost:8080 (simulator)
 ```
 
-Không có Zalo token vẫn dùng được 100% qua **simulator**; `zalo_configured=false` sẽ hiện trên UI.
+Without a Zalo token the sample still works 100% through the **simulator**; the UI shows `zalo_configured=false`.
 
-## ☁️ Deploy lên GreenNode AgentBase — qua Portal (UI)
+## ☁️ Deploy to GreenNode AgentBase — via the Portal (UI)
 
-Portal: **https://aiplatform.console.vngcloud.vn**. Bước 1 (LLM key) và Bước 3–4 (Gateway/Policy) giống repo [greennode-agentbase-sample-travel-buddy](../greennode-agentbase-sample-travel-buddy) — chỉ khác connector & policy action (`restaurant__*`). Các bước riêng của repo này:
+Portal: **https://aiplatform.console.vngcloud.vn**. Step 1 (LLM key) and Steps 3–4 (Gateway/Policy) are identical to the [greennode-agentbase-sample-travel-buddy](../greennode-agentbase-sample-travel-buddy) README — only the connector and policy actions differ (`restaurant__*`). The steps unique to this repo:
 
-### Bước A — Deploy MCP server thành runtime riêng
+### Step A — Deploy the MCP server as its own runtime
 1. `docker build -t <registry>/zalo-mcp-server:v1 src/mcp-server/ && docker push …`
-2. Portal → **Agents → Create Agent (Custom)**: name `zalo-mcp-server`, image trên, flavor `runtime-s2-general-2x4`, **không cần env**.
-3. ACTIVE → copy **endpoint URL**. Test: mở `<endpoint>/health` phải trả `{"status":"ok","tools":7}`.
+2. Portal → **Agents → Create Agent (Custom)**: name `zalo-mcp-server`, the image above, flavor `runtime-s2-general-2x4`, **no env vars**.
+3. When ACTIVE → copy the **endpoint URL**. Test: `<endpoint>/health` must return `{"status":"ok","tools":7}`.
 
-### Bước B — Thêm connector `restaurant` (No authorization)
+### Step B — Add the `restaurant` connector (No authorization)
 Portal → Gateway `sample-mcp-gw` → **Add Custom Connector**:
 - **Name**: `restaurant` · **Type**: `MCP`
-- **Endpoint / Connect URL**: `<endpoint-mcp-server-bước-A>/mcp`
-- **Outbound auth**: **No authorization** (server nội bộ, không secret)
+- **Endpoint / Connect URL**: `<mcp-server-endpoint-from-step-A>/mcp`
+- **Outbound auth**: **No authorization** (internal server, no secret)
 
 API: `PATCH /gateway/api/v1/gateways/sample-mcp-gw {"targets":[…,{"name":"restaurant","type":"MCP","endpoint":"<url>/mcp","outboundAuth":{"type":"NONE"}}]}`.
 
-### Bước C — Deploy agent runtime
+### Step C — Deploy the agent runtime
 1. `docker build -t <registry>/zalo-restaurant-bot:v1 . && docker push …`
-2. Portal → **Create Agent (Custom)**: name `zalo-restaurant-bot`, env theo bảng bên dưới.
-3. Mở endpoint → **Web Simulator** chạy ngay.
+2. Portal → **Create Agent (Custom)**: name `zalo-restaurant-bot`, env vars per the table below.
+3. Open the endpoint → the **Web Simulator** works immediately.
 
-### Bước D — Nối Zalo Bot thật (bot.zaloplatforms.com)
-1. Tạo bot: **https://bot.zaloplatforms.com** → *Tạo Bot* (docs: [create-bot](https://bot.zaloplatforms.com/docs/create-bot/)) → nhận **Bot Token** dạng `<id>:<secret>` (reset được trong Zalo Bot Creator).
-2. Vào Portal AgentBase → agent `zalo-restaurant-bot` → **Update Environment**: thêm `ZALO_BOT_TOKEN` + `ZALO_WEBHOOK_SECRET` (chuỗi bí mật 8–256 ký tự bạn tự đặt) → runtime tự restart.
-3. Đăng ký webhook (1 lệnh, docs [setWebhook](https://bot.zaloplatforms.com/docs/apis/setWebhook/)):
+### Step D — Connect a real Zalo Bot (bot.zaloplatforms.com)
+1. Create the bot: **https://bot.zaloplatforms.com** → *Create Bot* (docs: [create-bot](https://bot.zaloplatforms.com/docs/create-bot/)) → you receive a **Bot Token** shaped `<id>:<secret>` (resettable in Zalo Bot Creator).
+2. Portal → AgentBase → agent `zalo-restaurant-bot` → **Update Environment**: add `ZALO_BOT_TOKEN` + `ZALO_WEBHOOK_SECRET` (a secret string of 8–256 chars you choose) → the runtime restarts automatically.
+3. Register the webhook (one command, docs [setWebhook](https://bot.zaloplatforms.com/docs/apis/setWebhook/)):
    ```bash
    curl -X POST "https://bot-api.zaloplatforms.com/bot${ZALO_BOT_TOKEN}/setWebhook" \
      -H "Content-Type: application/json" \
-     -d '{"url":"<endpoint-runtime>/webhook/zalo","secret_token":"<ZALO_WEBHOOK_SECRET>"}'
+     -d '{"url":"<runtime-endpoint>/webhook/zalo","secret_token":"<ZALO_WEBHOOK_SECRET>"}'
    # ✓ "verification":{"ok":true,"outcome":"webhook.ok"}
    ```
-4. **Nhắn tin cho bot trên app Zalo** (link chia sẻ bot trong Zalo Bot Creator) → bot trả lời + lưu hồ sơ khách. Xem lại cấu hình: `getWebhookInfo` · test: `testWebhook`.
-5. Bot trả lời bằng `parse_mode=markdown` (bold/list hiển thị chuẩn trên Zalo). Chỉ xử lý `event_name = message.text.received`; image/sticker/voice được bỏ qua an toàn.
+4. **Message the bot in the Zalo app** (share link from Zalo Bot Creator) → it replies and stores the guest profile. Re-check config: `getWebhookInfo` · test: `testWebhook`.
+5. The bot replies with `parse_mode=markdown` (bold/lists render natively on Zalo). Only `event_name = message.text.received` is handled; image/sticker/voice events are safely ignored.
 
 ## 🔧 Env reference
 
-| Biến | Bắt buộc | Ý nghĩa |
+| Variable | Required | Meaning |
 |---|---|---|
 | `LLM_API_KEY` · `LLM_MODEL` | ✅ | LLM AIP |
-| `AGENTBASE_MEMORY_ID` | ✅ | `memory-…` (tạo như Bước 2 repo travel, **1 strategy CUSTOM** tên `customer-profile`, prompt: *"Rút trích hồ sơ khách quán: tên, số điện thoại, sở thích ăn uống (chay/cay/…) dị ứng, bàn quen, ngày sinh nhật, lịch sử đến quán."*) |
-| `MEMORY_STRATEGY_ID` | ✅ | `ltms-…` của strategy đó |
+| `AGENTBASE_MEMORY_ID` | ✅ | `memory-…` (create as in the travel repo Step 2, with **one CUSTOM strategy** named `customer-profile`, prompt: *"Extract the restaurant guest profile: name, phone, food preferences (vegetarian/spicy/allergies), usual table, birthday, visit history."*) |
+| `MEMORY_STRATEGY_ID` | ✅ | that strategy's `ltms-…` ID |
 | `MCP_RESTAURANT_URL` | ✅ | `<gateway-url>/restaurant` |
-| `ZALO_BOT_TOKEN` | tuỳ chọn | bật chế độ Zalo thật |
-| `ZALO_WEBHOOK_SECRET` | khuyến nghị | verify header `X-Bot-Api-Secret-Token` |
-| `ZALO_API_BASE` | mặc định | `https://bot-api.zaloplatforms.com` |
+| `ZALO_BOT_TOKEN` | optional | enables the real Zalo mode |
+| `ZALO_WEBHOOK_SECRET` | recommended | verifies the `X-Bot-Api-Secret-Token` header |
+| `ZALO_API_BASE` | default | `https://bot-api.zaloplatforms.com` |
 
 ## 🔌 API contract
 
-| Method | Path | Mô tả |
+| Method | Path | Description |
 |---|---|---|
-| POST | `/invocations` | simulator/REST chat (headers user/session) · `{"op":"whoami"}` |
-| POST | `/webhook/zalo` | webhook Zalo Bot Platform (verify secret, dedupe `message_id`) |
-| GET | `/webhook/zalo?challenge=` | kiểm tra thủ công |
-| GET | `/api/memory?actor=` · `/api/history` · `/api/actors` | hồ sơ khách · hội thoại · khách đã có |
-| GET | `/api/bookings` | gọi MCP `list_bookings` trực tiếp |
-| GET | `/api/info` · `/health` | cấu hình (có `zalo_configured`, tên bot) |
+| POST | `/invocations` | simulator/REST chat (user/session headers) · `{"op":"whoami"}` |
+| POST | `/webhook/zalo` | Zalo Bot Platform webhook (secret verification, `message_id` dedupe) |
+| GET | `/webhook/zalo?challenge=` | manual check |
+| GET | `/api/memory?actor=` · `/api/history` · `/api/actors` | guest profile · conversation · known guests |
+| GET | `/api/bookings` | calls the MCP `list_bookings` tool directly |
+| GET | `/api/info` · `/health` | config (includes `zalo_configured`, bot name) |
 
-## ✅ Đã verify E2E (tài khoản mẫu)
+## ✅ Verified end-to-end (demo account)
 
-- MCP server runtime ACTIVE (`/health` → 7 tools) · connector `restaurant` qua gateway OK.
-- Hùng (không cay) → bàn T3; Lan (ăn chay, 6 khách, T7) → đặt bàn thành công; quay lại session mới → bot nhớ đúng hồ sơ.
-- Webhook: secret đúng → xử lý + reply (`sent` thực tế khi chat Zalo thật); secret sai → **403**; `setWebhook` trả `verification.ok = true`.
-- Policy: token lạ gọi gateway → *"Request denied by policy."*
+- MCP server runtime ACTIVE (`/health` → 7 tools) · the `restaurant` connector works through the gateway.
+- Hung (no-spicy) → table T3 · Lan (vegetarian, 6 guests, T7) → booking created; a new session later → the bot recalls the profile exactly.
+- Webhook: correct secret → processed + replied (`sent` reflects a real Zalo send); wrong secret → **403**; `setWebhook` returned `verification.ok = true`.
+- Policy: an unknown token calling the gateway → *"Request denied by policy."*
 
-## 💰 Chi phí & dọn dẹp
+## 💰 Cost & teardown
 
-- **2 runtime** real wallet (mcp-server + agent, mỗi cái 1 replica 2x4). Teardown: delete 2 runtime, connector `restaurant`, memory, LLM key — hoặc skill `agentbase-teardown`.
+- **2 runtimes** on the real wallet (mcp-server + agent, 1 replica × 2x4 each). Teardown: delete both runtimes, the `restaurant` connector, memory, LLM key — or the `agentbase-teardown` skill.
 
