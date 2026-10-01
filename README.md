@@ -8,12 +8,12 @@
 
 | What | URL |
 |---|---|
-| **Web Simulator** (open in browser) | https://endpoint-00c922d6-7cc9-437b-95c3-121a7e744308.agentbase-runtime.aiplatform.vngcloud.vn/ |
+| Guest chat (real users) | **Zalo app** → search the bot *"Bot GreenNode AgentBase"* (no web UI on the demo endpoint — Zalo-first mode) |
 | Zalo webhook (POST, secret-verified) | https://endpoint-00c922d6-7cc9-437b-95c3-121a7e744308.agentbase-runtime.aiplatform.vngcloud.vn/webhook/zalo |
 | MCP server (separate runtime) | https://endpoint-27c8e2c0-a5ca-4d74-9766-5a0506f67cbf.agentbase-runtime.aiplatform.vngcloud.vn/health |
 | REST API | https://endpoint-00c922d6-7cc9-437b-95c3-121a7e744308.agentbase-runtime.aiplatform.vngcloud.vn/invocations |
 
-> Endpoints live on the demo account — they may be taken down after the demo period; deploy your own with Steps A–C below. To chat with the real Zalo bot, search the bot in the Zalo app (see Step D).
+> Endpoints live on the demo account — they may be taken down after the demo period; deploy your own with Steps A–C below. The demo deployment runs with `SERVE_UI=false` (guests interact only via Zalo); run locally with `SERVE_UI=true` to use the Web Simulator.
 
 ---
 
@@ -87,8 +87,8 @@ API: `PATCH /gateway/api/v1/gateways/sample-mcp-gw {"targets":[…,{"name":"rest
 
 ### Step C — Deploy the agent runtime
 1. `docker build -t <registry>/zalo-restaurant-bot:v1 . && docker push …`
-2. Portal → **Create Agent (Custom)**: name `zalo-restaurant-bot`, env vars per the table below.
-3. Open the endpoint → the **Web Simulator** works immediately.
+2. Portal → **Create Agent (Custom)**: name `zalo-restaurant-bot`, env vars per the table below. Set `SERVE_UI=false` for a **Zalo-first** deployment (no web UI on the endpoint — guests chat in the Zalo app only); leave it unset locally to get the Web Simulator at `GET /`.
+3. With `SERVE_UI=true` (local/default), open the endpoint → the **Web Simulator** works immediately.
 
 ### Step D — Connect a real Zalo Bot (bot.zaloplatforms.com)
 1. Create the bot: **https://bot.zaloplatforms.com** → *Create Bot* (docs: [create-bot](https://bot.zaloplatforms.com/docs/create-bot/)) → you receive a **Bot Token** shaped `<id>:<secret>` (resettable in Zalo Bot Creator).
@@ -114,6 +114,7 @@ API: `PATCH /gateway/api/v1/gateways/sample-mcp-gw {"targets":[…,{"name":"rest
 | `ZALO_BOT_TOKEN` | optional | enables the real Zalo mode |
 | `ZALO_WEBHOOK_SECRET` | recommended | verifies the `X-Bot-Api-Secret-Token` header |
 | `ZALO_API_BASE` | default | `https://bot-api.zaloplatforms.com` |
+| `SERVE_UI` | default `true` | `false` → disable the Web Simulator on the endpoint (Zalo-first mode) |
 
 ## 🔌 API contract
 

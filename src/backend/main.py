@@ -139,11 +139,14 @@ async def _webhook_post(request: Request) -> JSONResponse:
     if not zalo.webhook_secret_ok(request.headers.get("X-Bot-Api-Secret-Token", "")):
         return JSONResponse({"status": "denied"}, status_code=403)
 
+    print(f"[zalo-webhook] POST received, body keys: {list(payload.keys())}", flush=True)
     try:
         ev = zalo.parse_webhook(payload)
     except Exception as e:
+        print(f"[zalo-webhook] parse error: {e}", flush=True)
         return JSONResponse({"status": "ignored", "reason": f"parse error: {e}"})
     if not ev:
+        print(f"[zalo-webhook] ignored (không phải message.text) — body: {str(payload)[:200]}", flush=True)
         return JSONResponse({"message": "Success"})  # image/sticker/voice → bỏ qua
     if ev.get("already_seen"):
         return JSONResponse({"message": "Success"})  # Zalo retry trùng → bỏ qua
@@ -154,6 +157,7 @@ async def _webhook_post(request: Request) -> JSONResponse:
     reply = result.get("response") or f"Xin lỗi, có lỗi xảy ra: {result.get('error', 'không rõ')}"
     send_result = zalo.send_message(ev["chat_id"], reply)
     zalo.mark_seen(ev.get("message_id", ""))
+    print(f"[zalo-webhook] replied to {ev['chat_id']} | sent={bool(send_result.get('ok'))} | result={str(send_result)[:200]}", flush=True)
     return JSONResponse({"message": "Success", "sent": bool(send_result.get("ok"))})
 
 
@@ -251,7 +255,24 @@ app.add_route("/api/memory", _api_memory, methods=["GET"])
 app.add_route("/api/history", _api_history, methods=["GET"])
 app.add_route("/api/actors", _api_actors, methods=["GET"])
 app.add_route("/api/bookings", _api_bookings, methods=["GET"])
-app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="ui")
+
+# SERVE_UI=false → không serve frontend (chế độ Zalo-first: user chỉ tương tác qua Zalo)
+SERVE_UI = os.getenv("SERVE_UI", "true").strip().lower() not in ("false", "0", "no")
+
+async def _root(request: Request) -> JSONResponse:
+    if SERVE_UI:
+        return JSONResponse({"service": "zalo-restaurant-bot", "ui": "served at /index.html"})
+    return JSONResponse(
+        {
+            "service": "zalo-restaurant-bot",
+            "ui": "disabled (SERVE_UI=false) — người dùng tương tác qua Zalo",
+            "zalo_configured": zalo.zalo_configured(),
+        }
+    )
+
+app.add_route("/", _root, methods=["GET"])
+if SERVE_UI:
+    app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="ui")
 
 
 if __name__ == "__main__":
