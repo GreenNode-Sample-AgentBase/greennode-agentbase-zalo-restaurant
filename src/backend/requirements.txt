@@ -1,0 +1,8 @@
+greennode-agentbase==1.0.3
+greennode-agent-bridge[langgraph]>=0.1
+langchain>=1.2.0,<2.0.0
+langchain-openai>=1.1.0,<2.0.0
+langgraph>=0.4
+httpx>=0.27
+python-dotenv>=1.0
+pydantic>=2.7

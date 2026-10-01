@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Zalo Restaurant Bot — Web Simulator | Quán Ngon 123</title>
+  <!--
+    Web Simulator cho sample repo "Zalo Restaurant Bot — bot quán ăn nhớ khách quen".
+    Trang tĩnh (không build step, không CDN, không framework) được backend Python SDK
+    serve tại GET /. Toàn bộ API gọi same-origin nên không gặp vấn đề CORS.
+  -->
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- Dải toast lỗi trên cùng: hiện khi một lệnh fetch thất bại, có nút tắt -->
+  <div id="toast-strip" class="toast-strip hidden" role="alert">
+    <span id="toast-message"></span>
+    <button id="toast-close" class="toast-close" type="button" title="Đóng thông báo">✕</button>
+  </div>
+
+  <!-- Thanh tiêu đề ứng dụng -->
+  <header class="app-header">
+    <div class="app-header-left">
+      <span class="app-logo" aria-hidden="true">🍜</span>
+      <div>
+        <h1>Zalo Restaurant Bot — Web Simulator</h1>
+        <p>Bot quán ăn nhớ khách quen · GreenNode AgentBase sample</p>
+      </div>
+    </div>
+    <span class="app-header-badge">no build · no CDN · vanilla JS</span>
+  </header>
+
+  <!-- Bố cục 3 cột: khách hàng | khung chat điện thoại | bộ nhớ & đặt bàn -->
+  <main class="layout">
+
+    <!-- ================= CỘT TRÁI: Danh sách khách hàng (Zalo users) ================= -->
+    <aside class="sidebar">
+      <section class="panel">
+        <h2 class="panel-title">👥 Khách hàng <small>(Zalo users)</small></h2>
+
+        <!-- Danh sách actor lấy từ GET /api/actors, render bằng app.js -->
+        <div id="actor-list" class="actor-list"></div>
+
+        <!-- Form giả lập khách mới: id là số điện thoại, tự thêm đầu 84 nếu nhập số nội địa -->
+        <form id="new-customer-form" class="new-customer" autocomplete="off">
+          <input
+            id="new-customer-input"
+            type="text"
+            inputmode="numeric"
+            placeholder="+ Giả lập khách mới (SĐT)"
+            aria-label="Số điện thoại khách hàng mới"
+          />
+          <button type="submit" class="btn btn-primary">Thêm</button>
+        </form>
+
+        <p class="note-box">
+          💡 actorId = Zalo user ID thật khi chạy qua webhook Zalo.
+        </p>
+
+        <!-- Thông tin agent từ GET /api/info (model, trạng thái cấu hình Zalo OA) -->
+        <p id="info-line" class="info-line">Đang tải thông tin agent…</p>
+      </section>
+    </aside>
+
+    <!-- ================= CỘT GIỮA: Khung chat giả lập điện thoại Zalo ================= -->
+    <section class="phone-column">
+      <div class="phone-frame">
+
+        <!-- Header của khung chat: tên quán + badge + dot trạng thái -->
+        <div class="phone-header">
+          <div class="oa-avatar" aria-hidden="true">🍜</div>
+          <div class="phone-header-text">
+            <span class="oa-name">Quán Ngon 123</span>
+            <span class="oa-status">
+              <span id="status-dot" class="status-dot" aria-hidden="true"></span>
+              <span id="agent-status">Đang kết nối…</span>
+            </span>
+          </div>
+          <span class="badge-zalo">Zalo Simulator</span>
+        </div>
+
+        <!-- Vùng hiển thị tin nhắn (lịch sử + tin nhắn mới) -->
+        <div id="chat-messages" class="chat-messages" aria-live="polite"></div>
+
+        <!-- Chip gợi ý nhanh: click sẽ điền nội dung vào ô soạn tin (không tự gửi) -->
+        <div id="suggestion-chips" class="suggestion-chips" role="group" aria-label="Gợi ý nhanh">
+          <button type="button" class="chip">Đặt bàn tối nay 4 người</button>
+          <button type="button" class="chip">Tôi muốn bàn yên tĩnh</button>
+          <button type="button" class="chip">Mình ăn chay</button>
+          <button type="button" class="chip">Nhớ: sinh nhật tôi tháng 12</button>
+        </div>
+
+        <!-- Ô soạn tin: Enter = gửi, Shift+Enter = xuống dòng -->
+        <form id="composer" class="composer" autocomplete="off">
+          <textarea
+            id="composer-input"
+            rows="1"
+            placeholder="Nhập tin nhắn cho bot…"
+            aria-label="Nội dung tin nhắn"
+          ></textarea>
+          <button id="send-btn" type="submit" class="btn-send" title="Gửi tin nhắn (Enter)">➤</button>
+        </form>
+      </div>
+      <p class="phone-hint">Enter để gửi · Shift + Enter để xuống dòng</p>
+    </section>
+
+    <!-- ================= CỘT PHẢI: Bộ nhớ khách + Đặt bàn ================= -->
+    <aside class="right-panel">
+
+      <!-- Hồ sơ khách (Memory) — tự làm mới sau mỗi lượt bot trả lời và khi đổi khách -->
+      <section class="panel">
+        <h2 class="panel-title">🧠 Hồ sơ khách <small>(Memory)</small></h2>
+        <div id="memory-panel" class="memory-panel"></div>
+        <p class="info-box">
+          Memory strategy <strong>CUSTOM</strong> tự trích xuất hồ sơ khách quen từ hội thoại Zalo.
+        </p>
+      </section>
+
+      <!-- Đặt bàn hiện có — tải khi mở trang, có nút làm mới, cũng tự làm mới sau mỗi lượt bot trả lời -->
+      <section class="panel">
+        <div class="panel-head">
+          <h2 class="panel-title">📋 Đặt bàn hiện có</h2>
+          <button id="bookings-refresh" class="btn btn-ghost" type="button">↻ Làm mới</button>
+        </div>
+        <div class="table-wrap">
+          <table class="bookings-table">
+            <thead>
+              <tr>
+                <th>Ngày</th>
+                <th>Giờ</th>
+                <th>Khách</th>
+                <th>SL</th>
+                <th>Bàn</th>
+                <th>Trạng thái</th>
+              </tr>
+            </thead>
+            <tbody id="bookings-table-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </aside>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

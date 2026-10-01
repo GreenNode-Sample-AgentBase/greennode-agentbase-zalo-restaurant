@@ -1,0 +1,344 @@
+/* ==========================================================================
+   style.css — Web Simulator "Zalo Restaurant Bot — bot quán ăn nhớ khách quen"
+   Theme sáng lấy cảm hứng từ Zalo: xanh #0068ff, nền #eef2f7, card trắng.
+   Desktop: 3 cột — khách hàng | khung chat kiểu điện thoại | memory + đặt bàn.
+   Thuần CSS, không framework, không CDN.
+   ========================================================================== */
+
+/* ---------- Biến màu & thông số chung ---------- */
+:root {
+  --zalo-blue: #0068ff;         /* xanh thương hiệu Zalo */
+  --zalo-blue-dark: #0052cc;
+  --zalo-blue-soft: #e5efff;
+  --bg: #eef2f7;                /* nền trang */
+  --card: #ffffff;
+  --text: #1f2937;
+  --text-sub: #6b7280;
+  --line: #e5e9f0;
+  --green: #12b76a;  --green-bg: #e7f8f0;   /* badge CONFIRMED */
+  --gray: #667085;   --gray-bg: #f2f4f7;    /* badge CANCELLED */
+  --amber: #b54708;  --amber-bg: #fef4e6;   /* badge trạng thái khác */
+  --red: #b42318;                           /* toast lỗi */
+  --radius: 12px;
+  --shadow-card: 0 1px 3px rgba(16,24,40,.08), 0 4px 14px rgba(16,24,40,.06);
+  --shadow-bubble: 0 1px 3px rgba(16,24,40,.14);
+}
+
+/* ---------- Reset ---------- */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px; color: var(--text); background: var(--bg);
+  display: flex; flex-direction: column;
+}
+
+/* ---------- Thanh tiêu đề ứng dụng ---------- */
+.app-header {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 20px; color: #fff;
+  background: linear-gradient(135deg, var(--zalo-blue), #2f86ff);
+  box-shadow: 0 2px 10px rgba(0,104,255,.35);
+}
+.app-header-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.app-logo { font-size: 26px; }
+.app-header h1 { font-size: 16px; font-weight: 700; line-height: 1.2; }
+.app-header p { font-size: 12px; opacity: .85; }
+.app-header-badge {
+  font-size: 11px; padding: 4px 10px; border-radius: 999px; white-space: nowrap;
+  border: 1px solid rgba(255,255,255,.45); background: rgba(255,255,255,.14);
+}
+
+/* ---------- Toast lỗi trên cùng (tự ẩn sau 8s, bấm ✕ để tắt) ---------- */
+.toast-strip {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 9px 16px; font-size: 13px; color: #fff; background: var(--red);
+  box-shadow: 0 4px 12px rgba(180,35,24,.35);
+}
+.toast-strip.hidden { display: none; }
+.toast-close { border: none; background: transparent; color: #fff; font-size: 14px; cursor: pointer; opacity: .85; }
+.toast-close:hover { opacity: 1; }
+
+/* ---------- Bố cục 3 cột ---------- */
+.layout {
+  flex: 1; width: 100%; max-width: 1440px; margin: 0 auto; padding: 16px;
+  display: grid; gap: 16px; align-items: stretch; min-height: 0;
+  /* cột trái | cột giữa (khung điện thoại) | cột phải */
+  grid-template-columns: 280px minmax(360px, 600px) 370px;
+}
+
+/* ---------- Panel (card trắng dùng chung cho 3 cột) ---------- */
+.panel {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: var(--radius); box-shadow: var(--shadow-card); padding: 14px;
+}
+.panel-title { font-size: 14px; font-weight: 700; margin-bottom: 10px; }
+.panel-title small { font-size: 12px; font-weight: 400; color: var(--text-sub); }
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.panel-head .panel-title { margin-bottom: 10px; }
+
+/* ---------- Nút dùng chung ---------- */
+.btn {
+  border: none; border-radius: 10px; padding: 8px 12px;
+  font-size: 13px; font-weight: 600; cursor: pointer;
+  transition: background .15s ease, box-shadow .15s ease;
+}
+.btn-primary { background: var(--zalo-blue); color: #fff; }
+.btn-primary:hover { background: var(--zalo-blue-dark); }
+.btn-ghost {
+  background: #fff; color: var(--zalo-blue-dark);
+  border: 1px solid #cfe0ff; padding: 5px 10px; font-size: 12px;
+}
+.btn-ghost:hover { background: var(--zalo-blue-soft); }
+
+/* =========================================================
+   CỘT TRÁI — Danh sách khách hàng (Zalo users)
+   ========================================================= */
+.sidebar { min-height: 0; }
+
+.actor-list { display: flex; flex-direction: column; gap: 4px; max-height: 320px; overflow-y: auto; }
+
+/* Một dòng khách: avatar tròn + actorId + số session */
+.actor-item {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 8px; border: none; border-radius: 10px; background: transparent;
+  cursor: pointer; text-align: left; font: inherit; transition: background .15s ease;
+}
+.actor-item:hover { background: #f4f7fb; }
+.actor-item.active { background: var(--zalo-blue-soft); box-shadow: inset 3px 0 0 var(--zalo-blue); }
+
+.avatar {
+  flex-shrink: 0; width: 36px; height: 36px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, var(--zalo-blue), #5aa2ff);
+  color: #fff; font-size: 13px; font-weight: 700;
+}
+.actor-meta { display: flex; flex-direction: column; min-width: 0; }
+.actor-id { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.actor-sub { font-size: 11px; color: var(--text-sub); }
+
+/* Form thêm khách giả lập mới */
+.new-customer { display: flex; gap: 8px; margin-top: 12px; }
+.new-customer input {
+  flex: 1; min-width: 0; padding: 8px 10px; font: inherit; font-size: 13px;
+  border: 1px solid var(--line); border-radius: 10px; outline: none;
+}
+.new-customer input:focus { border-color: var(--zalo-blue); box-shadow: 0 0 0 3px rgba(0,104,255,.12); }
+
+/* Ghi chú giải thích cho dev */
+.note-box {
+  margin-top: 12px; padding: 8px 10px; font-size: 12px; line-height: 1.5;
+  color: #35507a; background: #f0f6ff; border: 1px dashed #b9d4ff; border-radius: 10px;
+}
+
+/* Dòng thông tin agent (từ GET /api/info) */
+.info-line { margin-top: 10px; font-size: 11.5px; line-height: 1.6; color: var(--text-sub); }
+.info-line code { font-size: 11px; padding: 1px 5px; border-radius: 5px; background: var(--gray-bg); }
+
+/* =========================================================
+   CỘT GIỮA — Khung chat giả lập điện thoại Zalo
+   ========================================================= */
+.phone-column { display: flex; flex-direction: column; min-height: 0; }
+
+/* "Khung điện thoại": viền tối bo tròn như màn hình mobile */
+.phone-frame {
+  flex: 1; min-height: 0; display: flex; flex-direction: column;
+  background: #fff; border: 8px solid #101828; border-radius: 28px; overflow: hidden;
+  box-shadow: 0 18px 44px rgba(16,24,40,.28);
+}
+.phone-hint { margin-top: 8px; text-align: center; font-size: 11.5px; color: var(--text-sub); }
+
+/* Header xanh Zalo của khung chat */
+.phone-header {
+  display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+  padding: 10px 14px; color: #fff; background: var(--zalo-blue);
+}
+.oa-avatar {
+  flex-shrink: 0; width: 38px; height: 38px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; font-size: 18px;
+  background: rgba(255,255,255,.22); border: 1px solid rgba(255,255,255,.35);
+}
+.phone-header-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.oa-name { font-size: 15px; font-weight: 700; }
+.oa-status { display: flex; align-items: center; gap: 6px; font-size: 11.5px; opacity: .92; }
+
+/* Dot trạng thái: xanh nhấp nháy nhẹ, cam khi Zalo OA chưa cấu hình */
+.status-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: #22e08a;
+  box-shadow: 0 0 0 0 rgba(34,224,138,.6); animation: pulse-dot 2s infinite;
+}
+.status-dot.warn { background: #f59e0b; box-shadow: 0 0 0 0 rgba(245,158,11,.6); }
+@keyframes pulse-dot {
+  0%   { box-shadow: 0 0 0 0 rgba(34,224,138,.5); }
+  70%  { box-shadow: 0 0 0 7px rgba(34,224,138,0); }
+  100% { box-shadow: 0 0 0 0 rgba(34,224,138,0); }
+}
+.badge-zalo {
+  flex-shrink: 0; font-size: 10.5px; font-weight: 700; letter-spacing: .4px;
+  padding: 4px 9px; border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.5); background: rgba(255,255,255,.16);
+}
+
+/* ---------- Vùng tin nhắn ---------- */
+.chat-messages {
+  flex: 1; min-height: 0; overflow-y: auto; padding: 16px 14px;
+  display: flex; flex-direction: column; gap: 10px; background: var(--bg);
+}
+
+/* Tin nhắn: user bên phải (bubble xanh), bot bên trái (bubble trắng có bóng) */
+.msg { display: flex; flex-direction: column; max-width: 82%; }
+.msg-user { align-self: flex-end; align-items: flex-end; }
+.msg-bot  { align-self: flex-start; align-items: flex-start; }
+
+.bubble {
+  padding: 9px 13px; border-radius: 16px; font-size: 14px; line-height: 1.55;
+  word-break: break-word; white-space: pre-wrap;
+}
+.msg-user .bubble {
+  background: linear-gradient(135deg, var(--zalo-blue), #2f86ff); color: #fff;
+  border-bottom-right-radius: 5px; box-shadow: 0 2px 8px rgba(0,104,255,.28);
+}
+.msg-bot .bubble {
+  background: #fff; color: var(--text);
+  border-bottom-left-radius: 5px; box-shadow: var(--shadow-bubble);
+}
+
+/* Markdown tối giản bên trong bubble */
+.bubble code { font-size: 12.5px; padding: 1px 5px; border-radius: 5px; background: rgba(16,24,40,.08); }
+.msg-user .bubble code { background: rgba(255,255,255,.22); }
+.bubble a { color: inherit; font-weight: 600; }
+
+/* Callout "✨ Bot nhớ" dưới bubble của bot khi memories_used khác rỗng */
+.memory-callout {
+  margin-top: 6px; padding: 6px 10px; font-size: 12px; line-height: 1.5;
+  color: #1d4ed8; background: #eef4ff; border: 1px dashed #b6d0ff; border-radius: 10px;
+}
+
+/* Bubble "bot đang gõ..." — 3 chấm nhấp nháy + đồng hồ đếm giây trôi */
+.typing-msg .bubble { display: flex; align-items: center; gap: 10px; padding: 12px 14px; }
+.typing-dots { display: inline-flex; gap: 4px; }
+.typing-dots i {
+  width: 7px; height: 7px; border-radius: 50%; background: #9ab3d6;
+  animation: blink-dot 1.2s infinite;
+}
+.typing-dots i:nth-child(2) { animation-delay: .2s; }
+.typing-dots i:nth-child(3) { animation-delay: .4s; }
+@keyframes blink-dot {
+  0%, 80%, 100% { opacity: .25; transform: translateY(0); }
+  40%           { opacity: 1;   transform: translateY(-3px); }
+}
+.typing-timer { font-size: 11px; color: var(--text-sub); font-variant-numeric: tabular-nums; }
+
+/* Khối chào mừng khi session chưa có tin nhắn nào */
+.welcome {
+  align-self: center; margin: auto; max-width: 88%; padding: 14px 16px;
+  text-align: center; font-size: 13px; line-height: 1.6; color: var(--text-sub);
+  background: #fff; border-radius: 14px; box-shadow: var(--shadow-card);
+}
+.welcome strong { color: var(--text); }
+.history-loading { margin: auto; font-size: 12.5px; color: var(--text-sub); text-align: center; }
+
+/* ---------- Chip gợi ý nhanh phía trên ô soạn tin ---------- */
+.suggestion-chips {
+  display: flex; gap: 8px; padding: 10px 14px; overflow-x: auto; flex-shrink: 0;
+  background: #fff; border-top: 1px solid var(--line);
+}
+.chip {
+  white-space: nowrap; padding: 6px 12px; font-size: 12.5px; cursor: pointer;
+  color: var(--zalo-blue-dark); background: #f5f9ff;
+  border: 1px solid #cfe0ff; border-radius: 999px; transition: background .15s ease;
+}
+.chip:hover { background: var(--zalo-blue-soft); }
+
+/* ---------- Ô soạn tin: Enter gửi, Shift+Enter xuống dòng ---------- */
+.composer {
+  display: flex; align-items: flex-end; gap: 10px; flex-shrink: 0;
+  padding: 12px 14px; background: #fff; border-top: 1px solid var(--line);
+}
+.composer textarea {
+  flex: 1; min-width: 0; resize: none; max-height: 120px;
+  padding: 10px 12px; font: inherit; font-size: 14px; line-height: 1.45; outline: none;
+  border: 1px solid var(--line); border-radius: 12px;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.composer textarea:focus { border-color: var(--zalo-blue); box-shadow: 0 0 0 3px rgba(0,104,255,.12); }
+.btn-send {
+  flex-shrink: 0; width: 42px; height: 42px; border: none; border-radius: 50%;
+  background: var(--zalo-blue); color: #fff; font-size: 17px; cursor: pointer;
+  transition: background .15s ease, transform .1s ease;
+}
+.btn-send:hover { background: var(--zalo-blue-dark); }
+.btn-send:active { transform: scale(.94); }
+.btn-send:disabled { opacity: .5; cursor: not-allowed; }
+
+/* =========================================================
+   CỘT PHẢI — Hồ sơ khách (Memory) + Đặt bàn hiện có
+   ========================================================= */
+.right-panel { display: flex; flex-direction: column; gap: 16px; min-height: 0; overflow-y: auto; }
+
+/* ---------- Memory: nhóm theo strategy, card cho từng record ---------- */
+.memory-panel { display: flex; flex-direction: column; }
+.memory-group { margin-bottom: 12px; }
+.memory-group:last-child { margin-bottom: 0; }
+.memory-group-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding-bottom: 4px; border-bottom: 1px solid var(--line);
+}
+.strategy-name { font-size: 12.5px; font-weight: 700; color: var(--zalo-blue-dark); }
+.strategy-id { font-size: 10.5px; color: var(--text-sub); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.memory-card {
+  margin-top: 8px; padding: 8px 10px; border-radius: 10px;
+  background: #f8faff; border: 1px solid #e3ecff; border-left: 3px solid var(--zalo-blue);
+}
+.memory-text { font-size: 12.5px; line-height: 1.5; }
+.memory-time { display: inline-block; margin-top: 4px; font-size: 10.5px; color: var(--text-sub); }
+
+/* Box giải thích về memory strategy CUSTOM */
+.info-box {
+  margin-top: 12px; padding: 8px 10px; font-size: 12px; line-height: 1.55;
+  color: var(--text-sub); background: #f8fafc; border: 1px solid var(--line); border-radius: 10px;
+}
+
+/* ---------- Bảng đặt bàn ---------- */
+.table-wrap { overflow-x: auto; }
+.bookings-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.bookings-table th {
+  padding: 6px 8px; text-align: left; white-space: nowrap;
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px;
+  color: var(--text-sub); border-bottom: 2px solid var(--line);
+}
+.bookings-table td { padding: 7px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.bookings-table tr:last-child td { border-bottom: none; }
+
+/* Badge trạng thái: CONFIRMED xanh lá, CANCELLED xám, trạng thái khác → cam */
+.status-badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 10.5px; font-weight: 700; letter-spacing: .3px; }
+.st-confirmed { background: var(--green-bg); color: var(--green); }
+.st-cancelled { background: var(--gray-bg); color: var(--gray); }
+.st-other { background: var(--amber-bg); color: var(--amber); }
+
+/* ---------- Trạng thái rỗng / ghi chú phụ ---------- */
+.empty-note { padding: 10px 6px; font-size: 12.5px; line-height: 1.6; color: var(--text-sub); text-align: center; }
+
+/* ---------- Thanh cuộn mảnh ---------- */
+.chat-messages::-webkit-scrollbar,
+.actor-list::-webkit-scrollbar,
+.right-panel::-webkit-scrollbar,
+.suggestion-chips::-webkit-scrollbar { width: 6px; height: 6px; }
+.chat-messages::-webkit-scrollbar-thumb,
+.actor-list::-webkit-scrollbar-thumb,
+.right-panel::-webkit-scrollbar-thumb,
+.suggestion-chips::-webkit-scrollbar-thumb { background: #c3cfdd; border-radius: 999px; }
+
+/* ---------- Responsive: co cột trên màn hình hẹp ---------- */
+@media (max-width: 1200px) {
+  .layout { grid-template-columns: 240px minmax(0, 1fr); }
+  .right-panel { grid-column: 1 / -1; flex-direction: row; align-items: flex-start; }
+  .right-panel .panel { flex: 1; min-width: 0; }
+}
+@media (max-width: 820px) {
+  .layout { grid-template-columns: 1fr; }
+  .phone-frame { border-width: 6px; border-radius: 22px; }
+  .right-panel { flex-direction: column; }
+  .app-header-badge { display: none; }
+}
