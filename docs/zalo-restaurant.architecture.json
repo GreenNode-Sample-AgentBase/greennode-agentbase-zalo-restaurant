@@ -1,0 +1,224 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Zalo Restaurant Bot — AgentBase full-stack",
+    "subtitle": "Webhook Zalo · Memory hồ sơ khách · MCP Gateway → MCP server runtime riêng",
+    "output": "architecture.html",
+    "viewBox": [
+      940,
+      660
+    ]
+  },
+  "components": [
+    {
+      "id": "zalo_user",
+      "type": "external",
+      "label": "Khách Zalo",
+      "sublabel": "Zalo app",
+      "pos": [
+        20,
+        240
+      ],
+      "size": [
+        120,
+        60
+      ]
+    },
+    {
+      "id": "zalo",
+      "type": "cloud",
+      "label": "Zalo Bot Platform",
+      "sublabel": "webhook · sendMessage",
+      "pos": [
+        240,
+        90
+      ],
+      "size": [
+        160,
+        60
+      ]
+    },
+    {
+      "id": "sim",
+      "type": "frontend",
+      "label": "Web Simulator",
+      "sublabel": "GET / · same-origin",
+      "pos": [
+        240,
+        420
+      ],
+      "size": [
+        140,
+        60
+      ]
+    },
+    {
+      "id": "runtime",
+      "type": "backend",
+      "label": "zalo-restaurant-bot",
+      "sublabel": "LangGraph agent · :8080",
+      "pos": [
+        500,
+        240
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "memory",
+      "type": "database",
+      "label": "Memory",
+      "sublabel": "CUSTOM customer-profile",
+      "pos": [
+        740,
+        90
+      ],
+      "size": [
+        170,
+        60
+      ]
+    },
+    {
+      "id": "llm",
+      "type": "cloud",
+      "label": "LLM API",
+      "sublabel": "GLM · OpenAI-compat",
+      "pos": [
+        755,
+        242
+      ],
+      "size": [
+        140,
+        60
+      ]
+    },
+    {
+      "id": "gateway",
+      "type": "security",
+      "label": "MCP Gateway",
+      "sublabel": "IAM inbound · policy",
+      "pos": [
+        510,
+        420
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "mcp",
+      "type": "messagebus",
+      "label": "restaurant-mcp-server",
+      "sublabel": "runtime riêng · 7 tools",
+      "pos": [
+        760,
+        420
+      ],
+      "size": [
+        165,
+        60
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "GreenNode AgentBase",
+      "wraps": [
+        "runtime",
+        "memory",
+        "llm",
+        "gateway"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "from": "zalo_user",
+      "to": "zalo",
+      "label": "nhắn tin",
+      "variant": "emphasis"
+    },
+    {
+      "from": "zalo",
+      "to": "runtime",
+      "label": "POST /webhook/zalo",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left",
+      "via": [
+        [
+          460,
+          120
+        ],
+        [
+          460,
+          272
+        ]
+      ]
+    },
+    {
+      "from": "sim",
+      "to": "runtime",
+      "label": "POST /invocations",
+      "fromSide": "right",
+      "toSide": "bottom"
+    },
+    {
+      "from": "runtime",
+      "to": "zalo",
+      "label": "sendMessage reply",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "from": "runtime",
+      "to": "memory",
+      "label": "hồ sơ khách",
+      "fromSide": "top",
+      "toSide": "left",
+      "via": [
+        [
+          660,
+          120
+        ]
+      ]
+    },
+    {
+      "from": "runtime",
+      "to": "llm",
+      "label": "chat completions"
+    },
+    {
+      "from": "runtime",
+      "to": "gateway",
+      "label": "tools/call",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 24
+    },
+    {
+      "from": "gateway",
+      "to": "mcp",
+      "label": "NONE outbound",
+      "variant": "security"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "rose",
+      "title": "Policy",
+      "items": [
+        "Gateway → restaurant: policy allow-zalo-restaurant (7 actions)",
+        "Mọi action khác: deny by default",
+        "Webhook verify X-Bot-Api-Secret-Token · 403 khi sai"
+      ]
+    }
+  ]
+}
