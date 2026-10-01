@@ -4,6 +4,17 @@
 
 📚 [Interactive architecture diagram](docs/architecture.html)
 
+## 🔗 Live demo (public endpoints)
+
+| What | URL |
+|---|---|
+| **Web Simulator** (open in browser) | https://endpoint-00c922d6-7cc9-437b-95c3-121a7e744308.agentbase-runtime.aiplatform.vngcloud.vn/ |
+| Zalo webhook (POST, secret-verified) | https://endpoint-00c922d6-7cc9-437b-95c3-121a7e744308.agentbase-runtime.aiplatform.vngcloud.vn/webhook/zalo |
+| MCP server (separate runtime) | https://endpoint-27c8e2c0-a5ca-4d74-9766-5a0506f67cbf.agentbase-runtime.aiplatform.vngcloud.vn/health |
+| REST API | https://endpoint-00c922d6-7cc9-437b-95c3-121a7e744308.agentbase-runtime.aiplatform.vngcloud.vn/invocations |
+
+> Endpoints live on the demo account — they may be taken down after the demo period; deploy your own with Steps A–C below. To chat with the real Zalo bot, search the bot in the Zalo app (see Step D).
+
 ---
 
 ## ✨ The experience — the restaurant *remembers* its guests
