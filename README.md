@@ -141,6 +141,27 @@ API: `PATCH /gateway/api/v1/gateways/sample-mcp-gw {"targets":[…,{"name":"rest
 - Webhook: correct secret → processed + replied (`sent` reflects a real Zalo send); wrong secret → **403**; `setWebhook` returned `verification.ok = true`.
 - Policy: an unknown token calling the gateway → *"Request denied by policy."*
 
+## 🤝 A2A protocol (agent-to-agent)
+
+Agent này là một **A2A server** (message/send; không streaming):
+
+| Endpoint | Method | Nội dung |
+|---|---|---|
+| `/.well-known/agent-card.json` | GET | Agent card: name, skill `restaurant-consultation`, capabilities (streaming ✘) |
+| `/a2a` | POST | JSON-RPC 2.0 `message/send` → `Message` chuẩn A2A (contextId + parts text) |
+
+- A2A tái dùng đúng `_chat_turn` của chat/webhook → hội thoại A2A **có memory** khách như Zalo thường.
+- Test nhanh:
+  ```bash
+  curl -s -X POST $ENDPOINT/a2a -H 'Content-Type: application/json' -d \
+    '{"jsonrpc":"2.0","id":"1","method":"message/send","params":{"message":{"kind":"message","messageId":"m1","role":"user","parts":[{"kind":"text","text":"Quán mở cửa đến mấy giờ?"}]}}}' | jq -r '.result.parts[0].text'
+  ```
+- Unit tests: `tests/test_a2a.py`.
+
+## 📊 Observability — LangFuse v4 (OTel SDK)
+
+Mọi turn (chat + webhook + A2A) được trace bằng **LangFuse SDK v4** (`langfuse>=4.0,<5`): `_lf_scope()` (`propagate_attributes`) bao ngoài `_chat_turn` → trace name/user/session/tags áp cho root + mọi child; `_lf_callback()` tạo trong scope. Bật bằng 3 env `LANGFUSE_PUBLIC_KEY/SECRET_KEY/HOST`; thiếu env → tracing tự tắt. UI thấy model + token usage từng generation, tool calls (`recall`), session/user/tags.
+
 ## 🛡️ Production hardening
 
 | Guard | How |

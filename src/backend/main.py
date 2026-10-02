@@ -15,11 +15,14 @@ Endpoints:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 import threading
+import uuid
 from datetime import datetime
+from contextlib import nullcontext
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -55,6 +58,56 @@ LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
 AGENT_API_KEY = os.environ.get("AGENT_API_KEY", "").strip()
 # DEBUG_OPS=1: bật op whoami (lộ identity runtime — chỉ dùng lúc setup policy)
 DEBUG_OPS = os.environ.get("DEBUG_OPS", "0").strip() in ("1", "true", "yes")
+
+# A2A (Agent-to-Agent protocol): URL public của runtime này để ghi vào agent card
+A2A_PUBLIC_URL = os.environ.get("A2A_PUBLIC_URL", "").rstrip("/")
+
+# LangFuse tracing (optional): LANGFUSE_PUBLIC_KEY / SECRET_KEY / HOST
+
+
+def _lf_tracing() -> bool:
+    """LangFuse v4 tracing bật khi đủ 3 env (SDK v4 client tự đọc, auth qua env)."""
+    return bool(
+        os.environ.get("LANGFUSE_PUBLIC_KEY")
+        and os.environ.get("LANGFUSE_SECRET_KEY")
+        and os.environ.get("LANGFUSE_HOST")
+    )
+
+
+def _lf_scope(trace_name: str, user_id: str = "", session_id: str = "", tags: list | None = None):
+    """LangFuse v4: scope `propagate_attributes` — trace_name/user/session/tags áp cho
+    root observation VÀ mọi child (kể cả generation chịu chi phí).
+
+    Phải vào scope TRƯỚC khi tạo CallbackHandler và chạy agent (cùng thread/context).
+    Tracing tắt → nullcontext (chạy bình thường)."""
+    if not _lf_tracing():
+        return nullcontext()
+    try:
+        from langfuse import propagate_attributes
+
+        kwargs: dict = {"trace_name": trace_name, "tags": tags or []}
+        if user_id:
+            kwargs["user_id"] = user_id
+        if session_id:
+            kwargs["session_id"] = session_id
+        return propagate_attributes(**kwargs)
+    except Exception as e:
+        logger.warning("LangFuse scope tắt: %s", e)
+        return nullcontext()
+
+
+def _lf_callback():
+    """LangFuse v4 CallbackHandler (OTel, auth qua env) — tạo BÊN TRONG scope
+    để kế thừa trace context; None = tracing tắt."""
+    if not _lf_tracing():
+        return None
+    try:
+        from langfuse.langchain import CallbackHandler
+
+        return CallbackHandler()
+    except Exception as e:
+        logger.warning("LangFuse callback tắt: %s", e)
+        return None
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 TZ_VN = ZoneInfo("Asia/Ho_Chi_Minh")
@@ -107,13 +160,24 @@ def _get_user_id(context) -> str:
     return ""
 
 
-async def _chat_turn(actor_id: str, session_id: str, message: str) -> dict:
-    """1 turn hội thoại qua agent (dùng cho cả /invocations và webhook)."""
+async def _chat_turn(actor_id: str, session_id: str, message: str, trace_name: str = "zalo-chat") -> dict:
+    """1 turn hội thoại qua agent (dùng cho /invocations, webhook và A2A)."""
     try:
-        result = await agent_mod.get_agent().ainvoke(
-            {"messages": [{"role": "user", "content": message}]},
-            config={"configurable": {"thread_id": session_id, "actor_id": actor_id}},
-        )
+        # LangFuse v4: scope propagate_attributes bọc cả ainvoke (cùng context)
+        with _lf_scope(
+            trace_name,
+            actor_id,
+            session_id,
+            ["chat", "a2a"] if trace_name.startswith("a2a") else ["chat"],
+        ):
+            cb = _lf_callback()
+            result = await agent_mod.get_agent().ainvoke(
+                {"messages": [{"role": "user", "content": message}]},
+                config={
+                    "callbacks": [cb] if cb else [],
+                    "configurable": {"thread_id": session_id, "actor_id": actor_id},
+                },
+            )
     except Exception as e:
         return {"status": "error", "error": f"{type(e).__name__}: {e}", "timestamp": _now()}
 
@@ -140,6 +204,91 @@ async def _chat_turn(actor_id: str, session_id: str, message: str) -> dict:
         "memories_used": memories_used,
         "timestamp": _now(),
     }
+
+
+# ── A2A (Agent-to-Agent protocol): agent card + JSON-RPC /a2a ──
+
+
+def _a2a_card() -> dict:
+    return {
+        "name": "zalo-restaurant-bot",
+        "description": (
+            "Agent tư vấn nhà hàng/đặt bàn qua Zalo: menu, đặt chỗ, tích điểm thân thiết, "
+            "chăm sóc khách hàng — có memory từng khách."
+        ),
+        "url": f"{A2A_PUBLIC_URL}/a2a" if A2A_PUBLIC_URL else "/a2a",
+        "version": "1.0.0",
+        "protocolVersion": "0.3.0",
+        "capabilities": {"streaming": False, "pushNotifications": False, "stateTransitionHistory": False},
+        "defaultInputModes": ["text/plain"],
+        "defaultOutputModes": ["text/plain"],
+        "skills": [
+            {
+                "id": "restaurant-consultation",
+                "name": "Tư vấn nhà hàng & đặt bàn",
+                "description": "Tư vấn menu, đặt bàn, câu hỏi về mở cửa/giá/địa điểm, chương trình thành viên.",
+                "tags": ["restaurant", "booking", "zalo"],
+                "examples": ["Đặt bàn 4 người tối thứ 7, cần món chay", "Mình tích được bao nhiêu điểm rồi?"],
+            },
+        ],
+        "preferredTransport": "JSONRPC",
+    }
+
+
+async def _agent_card_route(request: Request) -> JSONResponse:
+    return JSONResponse(_a2a_card())
+
+
+def _a2a_text(params: dict) -> str:
+    msg = (params or {}).get("message") or {}
+    return "".join(
+        str(p.get("text", ""))
+        for p in msg.get("parts", [])
+        if p.get("kind") == "text" or "text" in p
+    ).strip()
+
+
+async def _a2a_route(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}
+        )
+    method = body.get("method", "")
+    rid = body.get("id")
+    if method != "message/send":
+        return JSONResponse(
+            {"jsonrpc": "2.0", "id": rid,
+             "error": {"code": -32601, "message": f"Method not found: {method}"}}
+        )
+    text = _a2a_text(body.get("params"))
+    if not text:
+        return JSONResponse(
+            {"jsonrpc": "2.0", "id": rid,
+             "error": {"code": -32602, "message": "params.message.parts không có text"}}
+        )
+    msg = (body.get("params") or {}).get("message") or {}
+    ctx = msg.get("contextId") or f"a2a-{uuid.uuid4().hex[:12]}"
+    result = await asyncio.to_thread(
+        run_coro, _chat_turn("a2a", ctx, text, trace_name="a2a-zalo-turn")
+    )
+    if result.get("status") != "success":
+        return JSONResponse(
+            {"jsonrpc": "2.0", "id": rid,
+             "error": {"code": -32603, "message": result.get("error", "agent error")}}
+        )
+    return JSONResponse({
+        "jsonrpc": "2.0",
+        "id": rid,
+        "result": {
+            "kind": "message",
+            "messageId": f"msg-{uuid.uuid4()}",
+            "contextId": ctx,
+            "role": "agent",
+            "parts": [{"kind": "text", "text": str(result.get("response") or "")}],
+        },
+    })
 
 
 @app.entrypoint
@@ -363,6 +512,8 @@ async def _root(request: Request) -> JSONResponse:
     )
 
 app.add_route("/", _root, methods=["GET"])
+app.add_route("/.well-known/agent-card.json", _agent_card_route, methods=["GET"])
+app.add_route("/a2a", _a2a_route, methods=["POST"])
 app.add_middleware(ApiKeyMiddleware)
 if SERVE_UI:
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="ui")
