@@ -1,6 +1,6 @@
 # 🍜 Zalo Restaurant Bot — "Quán Ngon 123" (remembers returning guests)
 
-[![CI](https://github.com/GreenNode-Samples/greennode-agentbase-sample-zalo-restaurant/actions/workflows/ci.yml/badge.svg)](https://github.com/GreenNode-Samples/greennode-agentbase-sample-zalo-restaurant/actions/workflows/ci.yml)
+[![CI](https://github.com/GreenNode-Samples/sample-zalo-restaurant/actions/workflows/ci.yml/badge.svg)](https://github.com/GreenNode-Samples/sample-zalo-restaurant/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 > An **end-to-end** sample on **GreenNode AgentBase**: Agent Runtime + **custom MCP server running as its own runtime** + **MCP Governance** (MCP Gateway + Policy Group) + **CUSTOM Memory** (guest profiles) + the **Zalo Bot Platform** (real webhook) + a **Web Simulator**.
@@ -77,7 +77,7 @@ Without a Zalo token the sample still works 100% through the **simulator**; the 
 
 ## ☁️ Deploy to GreenNode AgentBase — via the Portal (UI)
 
-Portal: **https://aiplatform.console.vngcloud.vn**. Step 1 (LLM key) and Steps 3–4 (MCP Gateway / Policy Group) are identical to the [greennode-agentbase-sample-travel-buddy](../greennode-agentbase-sample-travel-buddy) README — only the connector and policy actions differ (`restaurant__*`). The steps unique to this repo:
+Portal: **https://aiplatform.console.vngcloud.vn**. Step 1 (LLM key) and Steps 3–4 (MCP Gateway / Policy Group) are identical to the [sample-travel-buddy](../sample-travel-buddy) README — only the connector and policy actions differ (`restaurant__*`). The steps unique to this repo:
 
 ### Step A — Deploy the MCP server as its own runtime
 1. `docker build -t <registry>/zalo-mcp-server:v1 src/mcp-server/ && docker push …`
