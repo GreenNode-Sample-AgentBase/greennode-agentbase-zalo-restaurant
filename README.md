@@ -32,19 +32,7 @@ The **Web Simulator** (`GET /`): a Zalo-style UI (phone frame), add new guests, 
 
 ## 🏗 Architecture — 2 runtimes, 1 gateway
 
-```mermaid
-flowchart LR
-    ZU[Zalo guest] <--> ZB[Zalo Bot Platform<br/>webhook]
-    SIM[Web Simulator] --> R[zalo-restaurant-bot<br/>LangGraph :8080]
-    ZB -->|POST /webhook/zalo| R
-    R -->|sendMessage| ZB
-    R -->|guest profile| M[(Memory<br/>CUSTOM strategy)]
-    R -->|chat completions| L[LLM AIP]
-    R -->|tools/call| G{{MCP Gateway<br/>Inbound Auth: IAM}}
-    G --> P{Policy Group<br/>first match wins}
-    P --> C[MCP Connector<br/>Outbound Auth: No authorization]
-    C --> MCP[restaurant-mcp-server<br/>separate runtime · 7 tools]
-```
+![Kiến trúc zalo-restaurant](docs/architecture.svg)
 
 > MCP flow: **Agent → MCP Gateway (Inbound Auth) → Policy Group → MCP Connector (Outbound Auth) → MCP server**. LLM calls are a **separate path** (direct to LLM AIP here; on AgentBase Runtime they can also go through the *Sidecar LLM Proxy* — see [LLM endpoint](#-llm-endpoint-optional-sidecar-llm-proxy)).
 
