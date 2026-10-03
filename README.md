@@ -1,6 +1,6 @@
 # 🍜 Zalo Restaurant Bot — "Quán Ngon 123" (remembers returning guests)
 
-[![CI](https://github.com/GreenNode-Sample-AgentBase/greennode-agentbase-zalo-restaurant/actions/workflows/ci.yml/badge.svg)](https://github.com/GreenNode-Sample-AgentBase/greennode-agentbase-zalo-restaurant/actions/workflows/ci.yml)
+[![CI](https://github.com/GreenNode-Samples/greennode-agentbase-sample-zalo-restaurant/actions/workflows/ci.yml/badge.svg)](https://github.com/GreenNode-Samples/greennode-agentbase-sample-zalo-restaurant/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 > An **end-to-end** sample on **GreenNode AgentBase**: Agent Runtime + **custom MCP server running as its own runtime** + **MCP Governance** (MCP Gateway + Policy Group) + **CUSTOM Memory** (guest profiles) + the **Zalo Bot Platform** (real webhook) + a **Web Simulator**.
