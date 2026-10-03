@@ -41,46 +41,35 @@ _agent_lock = threading.Lock()   # lock riêng cho agent cache
 # LƯU Ý: KHÔNG dùng chung 1 Lock — get_agent giữ lock rồi gọi get_mcp_tools
 # xin lại lock đó trên cùng thread → self-deadlock.
 
-class _TrimmingEvents(AgentBaseMemoryEvents):
-    """Checkpointer + trim context: mỗi lần put, cap messages về
-    system prompt + MAX_HISTORY_MESSAGES message cuối (cắt tại biên HumanMessage
-    để không vỡ cặp tool_call/tool). Hoạt động với mọi version langchain."""
-
-    def put(self, config, checkpoint, metadata, new_versions):
-        try:
-            from langchain_core.messages import HumanMessage, SystemMessage
-
-            vals = (checkpoint or {}).get("channel_values") or {}
-            msgs = vals.get("messages")
-            if msgs and len(msgs) > MAX_HISTORY_MESSAGES:
-                tail = list(msgs)[-MAX_HISTORY_MESSAGES:]
-                for i, m in enumerate(tail):
-                    if isinstance(m, HumanMessage):
-                        tail = tail[i:]
-                        break
-                sys_msgs = [m for m in msgs if isinstance(m, SystemMessage)][:1]
-                vals["messages"] = sys_msgs + tail
-        except Exception:
-            pass  # trim là tối ưu — không được làm hỏng checkpoint
-        return super().put(config, checkpoint, metadata, new_versions)
-
-
-
-def _trim_messages(state: dict) -> dict:
-    """pre_model_hook: giữ system prompt + 40 message cuối, cắt ở biên HumanMessage
+def _trim_history(msgs: list) -> list:
+    """Giữ system prompt + MAX_HISTORY_MESSAGES message cuối, cắt tại biên HumanMessage
     để không làm vỡ cặp tool_call/tool của LangGraph."""
     from langchain_core.messages import HumanMessage, SystemMessage
 
-    msgs = list(state.get("messages") or [])
+    msgs = list(msgs or [])
     if len(msgs) <= MAX_HISTORY_MESSAGES:
-        return {"llm_input_messages": msgs}
+        return msgs
     tail = msgs[-MAX_HISTORY_MESSAGES:]
-    for i, m in enumerate(tail):
+    for i, m in enumerate(tail):  # không bắt đầu giữa cặp AI-tool
         if isinstance(m, HumanMessage):
             tail = tail[i:]
             break
     sys_msgs = [m for m in msgs if isinstance(m, SystemMessage)][:1]
-    return {"llm_input_messages": sys_msgs + tail}
+    return sys_msgs + tail
+
+
+class _TrimmingEvents(AgentBaseMemoryEvents):
+    """Checkpointer + trim context: mỗi lần put, cap messages bằng _trim_history.
+    Hoạt động với mọi version langchain."""
+
+    def put(self, config, checkpoint, metadata, new_versions):
+        try:
+            vals = (checkpoint or {}).get("channel_values") or {}
+            if vals.get("messages"):
+                vals["messages"] = _trim_history(vals["messages"])
+        except Exception:
+            pass  # trim là tối ưu — không được làm hỏng checkpoint
+        return super().put(config, checkpoint, metadata, new_versions)
 
 
 def _schema_to_model(tool_def: dict):

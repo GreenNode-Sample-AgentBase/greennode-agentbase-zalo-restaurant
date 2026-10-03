@@ -3,7 +3,7 @@
 [![CI](https://github.com/GreenNode-Sample-AgentBase/greennode-agentbase-zalo-restaurant/actions/workflows/ci.yml/badge.svg)](https://github.com/GreenNode-Sample-AgentBase/greennode-agentbase-zalo-restaurant/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-> An **end-to-end** sample on **GreenNode AgentBase**: Agent Runtime + **custom MCP server running as its own runtime** + **MCP Gateway** (IAM + Policy) + **CUSTOM Memory** (guest profiles) + the **Zalo Bot Platform** (real webhook) + a **Web Simulator**.
+> An **end-to-end** sample on **GreenNode AgentBase**: Agent Runtime + **custom MCP server running as its own runtime** + **MCP Governance** (MCP Gateway + Policy Group) + **CUSTOM Memory** (guest profiles) + the **Zalo Bot Platform** (real webhook) + a **Web Simulator**.
 
 📚 [Interactive architecture diagram](docs/architecture.html)
 
@@ -40,13 +40,17 @@ flowchart LR
     R -->|sendMessage| ZB
     R -->|guest profile| M[(Memory<br/>CUSTOM strategy)]
     R -->|chat completions| L[LLM AIP]
-    R -->|tools/call via IAM| G{{MCP Gateway<br/>+ Policy}}
-    G -->|NONE outbound| MCP[restaurant-mcp-server<br/>separate runtime · 7 tools]
+    R -->|tools/call| G{{MCP Gateway<br/>Inbound Auth: IAM}}
+    G --> P{Policy Group<br/>first match wins}
+    P --> C[MCP Connector<br/>Outbound Auth: No authorization]
+    C --> MCP[restaurant-mcp-server<br/>separate runtime · 7 tools]
 ```
 
-- **`src/mcp-server`** — a FastMCP server (stateless HTTP) with 7 restaurant tools: `get_menu`, `check_availability`, `create_booking`, `list_bookings`, `cancel_booking`, `get_loyalty`, `add_loyalty_points` — **deployed as its own AgentBase runtime**, exposed through the gateway via the `restaurant` connector (outbound **NONE**). Bookings and loyalty points are persisted in **SQLite** (`MCP_DB_PATH`, default `data/restaurant.db`) — restarting the runtime does **not** lose data.
+> MCP flow: **Agent → MCP Gateway (Inbound Auth) → Policy Group → MCP Connector (Outbound Auth) → MCP server**. LLM calls are a **separate path** (direct to LLM AIP here; on AgentBase Runtime they can also go through the *Sidecar LLM Proxy* — see [LLM endpoint](#-llm-endpoint-optional-sidecar-llm-proxy)).
+
+- **`src/mcp-server`** — a FastMCP server (stateless HTTP) with 7 restaurant tools: `get_menu`, `check_availability`, `create_booking`, `list_bookings`, `cancel_booking`, `get_loyalty`, `add_loyalty_points` — **deployed as its own AgentBase runtime**, exposed through the gateway via the `restaurant` **MCP Connector** (Outbound Auth = **No authorization**). Bookings and loyalty points are persisted in **SQLite** (`MCP_DB_PATH`, default `data/restaurant.db`) — restarting the runtime does **not** lose data.
 - **`src/backend`** — LangGraph agent + Memory (1 **CUSTOM** strategy "customer-profile") + the Zalo webhook (**ack 200 immediately, LLM turn runs in a background thread** — Zalo never waits on the LLM; secret verification, retry dedupe, replies with `parse_mode=markdown` cut cleanly at the 2000-char limit).
-- **Policy** — `sample-gw-policy`: the zalo-bot may call only the 7 `restaurant__*` actions; travel-buddy (a separate sample repo) only `tavily__*`; everything else is **denied by default**.
+- **Policy Group** — `sample-gw-policy` (first match wins): the zalo-bot may call only the 7 `restaurant__*` actions; travel-buddy (a separate sample repo) only `tavily__*`; a `tools/call` matching no rule gets **403**. With **no** Policy Group attached, *every* `tools/call` is 403; `tools/list` bypasses policy.
 
 ## 📁 Layout
 
@@ -73,7 +77,7 @@ Without a Zalo token the sample still works 100% through the **simulator**; the 
 
 ## ☁️ Deploy to GreenNode AgentBase — via the Portal (UI)
 
-Portal: **https://aiplatform.console.vngcloud.vn**. Step 1 (LLM key) and Steps 3–4 (Gateway/Policy) are identical to the [greennode-agentbase-sample-travel-buddy](../greennode-agentbase-sample-travel-buddy) README — only the connector and policy actions differ (`restaurant__*`). The steps unique to this repo:
+Portal: **https://aiplatform.console.vngcloud.vn**. Step 1 (LLM key) and Steps 3–4 (MCP Gateway / Policy Group) are identical to the [greennode-agentbase-sample-travel-buddy](../greennode-agentbase-sample-travel-buddy) README — only the connector and policy actions differ (`restaurant__*`). The steps unique to this repo:
 
 ### Step A — Deploy the MCP server as its own runtime
 1. `docker build -t <registry>/zalo-mcp-server:v1 src/mcp-server/ && docker push …`
@@ -81,17 +85,18 @@ Portal: **https://aiplatform.console.vngcloud.vn**. Step 1 (LLM key) and Steps 3
 3. When ACTIVE → copy the **endpoint URL**. Test: `<endpoint>/health` must return `{"status":"ok","tools":7}`.
 
 ### Step B — Add the `restaurant` connector (No authorization)
-Portal → Gateway `sample-mcp-gw` → **Add Custom Connector**:
+Portal → **MCP Governance → MCP Gateway** `sample-mcp-gw` → **Add Custom Connector**:
 - **Name**: `restaurant` · **Type**: `MCP`
 - **Endpoint / Connect URL**: `<mcp-server-endpoint-from-step-A>/mcp`
-- **Outbound auth**: **No authorization** (internal server, no secret)
+- **Outbound Auth**: **No authorization** (internal server, no secret)
 
 API: `PATCH /gateway/api/v1/gateways/sample-mcp-gw {"targets":[…,{"name":"restaurant","type":"MCP","endpoint":"<url>/mcp","outboundAuth":{"type":"NONE"}}]}`.
 
 ### Step C — Deploy the agent runtime
 1. `docker build -t <registry>/zalo-restaurant-bot:v1 . && docker push …`
-2. Portal → **Create Agent (Custom)**: name `zalo-restaurant-bot`, env vars per the table below. Set `SERVE_UI=false` for a **Zalo-first** deployment (no web UI on the endpoint — guests chat in the Zalo app only); leave it unset locally to get the Web Simulator at `GET /`.
-3. With `SERVE_UI=true` (local/default), open the endpoint → the **Web Simulator** works immediately.
+2. Portal → **Create Agent (Custom)**: name `zalo-restaurant-bot`, env vars per the table below (`GREENNODE_CLIENT_ID`, `GREENNODE_CLIENT_SECRET`, `GREENNODE_AGENT_IDENTITY` are auto-injected by the runtime). Set `SERVE_UI=false` for a **Zalo-first** deployment (no web UI on the endpoint — guests chat in the Zalo app only); leave it unset locally to get the Web Simulator at `GET /`.
+3. Review the runtime's **Security Settings** (**IP Access Control** + **Inbound Identity**) — see *Production hardening* below; note the Zalo webhook caveat there.
+4. With `SERVE_UI=true` (local/default), open the endpoint → the **Web Simulator** works immediately.
 
 ### Step D — Connect a real Zalo Bot (bot.zaloplatforms.com)
 1. Create the bot: **https://bot.zaloplatforms.com** → *Create Bot* (docs: [create-bot](https://bot.zaloplatforms.com/docs/create-bot/)) → you receive a **Bot Token** shaped `<id>:<secret>` (resettable in Zalo Bot Creator).
@@ -111,6 +116,7 @@ API: `PATCH /gateway/api/v1/gateways/sample-mcp-gw {"targets":[…,{"name":"rest
 | Variable | Required | Meaning |
 |---|---|---|
 | `LLM_API_KEY` · `LLM_MODEL` | ✅ | LLM AIP |
+| `LLM_BASE_URL` | optional | OpenAI-compatible endpoint, default LLM AIP `https://maas-llm-aiplatform-hcm.api.vngcloud.vn/v1`. On AgentBase Runtime may point to the Sidecar LLM Proxy `http://localhost:18080` (verify with GreenNode) |
 | `AGENTBASE_MEMORY_ID` | ✅ | `memory-…` (create as in the travel repo Step 2, with **one CUSTOM strategy** named `customer-profile`, prompt: *"Extract the restaurant guest profile: name, phone, food preferences (vegetarian/spicy/allergies), usual table, birthday, visit history."*) |
 | `MEMORY_STRATEGY_ID` | ✅ | that strategy's `ltms-…` ID |
 | `MCP_RESTAURANT_URL` | ✅ | `<gateway-url>/restaurant` |
@@ -122,11 +128,18 @@ API: `PATCH /gateway/api/v1/gateways/sample-mcp-gw {"targets":[…,{"name":"rest
 | `DEBUG_OPS` | default `0` | `1` enables the `{"op":"whoami"}` identity op — only while setting up policies |
 | `MCP_DB_PATH` | default `data/restaurant.db` | SQLite path for the MCP server (bookings/loyalty persistence) |
 
+## 🔀 LLM endpoint (optional: Sidecar LLM Proxy)
+
+By default the agent calls the LLM directly: `ChatOpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY)` with `LLM_BASE_URL=https://maas-llm-aiplatform-hcm.api.vngcloud.vn/v1`. This sample does **not** change that default.
+
+Per the AgentBase docs, LLM calls on a Runtime go through a **Sidecar LLM Proxy** that is auto-injected when the agent is created (endpoint `localhost:18080` in the agent config) — a path **separate from the MCP Gateway**. To try it on a Runtime, set `LLM_BASE_URL=http://localhost:18080`. ⚠️ *Verify with GreenNode for your runtime version* (auth requirements and model names are not covered here) before relying on it.
+
 ## 🔌 API contract
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/invocations` | simulator/REST chat (user/session headers) · `{"op":"whoami"}` |
+| POST | `/invocations` | simulator/REST chat · headers `X-GreenNode-AgentBase-User-Id` (→ memory `actorId`) + `-Session-Id` (→ `thread_id`) are **required** — missing → `400`, no defaults (the Runtime sets them on real traffic) · `{"op":"whoami"}` |
+| POST | `/a2a` | A2A JSON-RPC; requires `X-GreenNode-AgentBase-User-Id` (missing → `400`) |
 | POST | `/webhook/zalo` | Zalo Bot Platform webhook (secret verification, `message_id` dedupe) |
 | GET | `/webhook/zalo?challenge=` | manual check |
 | GET | `/api/memory?actor=` · `/api/history` · `/api/actors` | guest profile · conversation · known guests |
@@ -139,7 +152,7 @@ API: `PATCH /gateway/api/v1/gateways/sample-mcp-gw {"targets":[…,{"name":"rest
 - MCP server runtime ACTIVE (`/health` → 7 tools) · the `restaurant` connector works through the gateway.
 - Hung (no-spicy) → table T3 · Lan (vegetarian, 6 guests, T7) → booking created; a new session later → the bot recalls the profile exactly.
 - Webhook: correct secret → processed + replied (`sent` reflects a real Zalo send); wrong secret → **403**; `setWebhook` returned `verification.ok = true`.
-- Policy: an unknown token calling the gateway → *"Request denied by policy."*
+- Policy Group: an unknown token calling the gateway → 403 *"Request denied by policy."*
 
 ## 🤝 A2A protocol (agent-to-agent)
 
@@ -151,12 +164,13 @@ Agent này là một **A2A server** (message/send; không streaming):
 | `/a2a` | POST | JSON-RPC 2.0 `message/send` → `Message` chuẩn A2A (contextId + parts text) |
 
 - A2A tái dùng đúng `_chat_turn` của chat/webhook → hội thoại A2A **có memory** khách như Zalo thường.
+- `POST /a2a` **bắt buộc** header `X-GreenNode-AgentBase-User-Id` (→ memory `actorId`; thiếu → 400, không còn actor mặc định `a2a` dùng chung). Qua AgentBase Runtime header được gắn sẵn; gọi trực tiếp thì tự gửi. `contextId` thiếu → dùng header `X-GreenNode-AgentBase-Session-Id`, rồi mới tới id sinh mới.
 - Test nhanh:
   ```bash
-  curl -s -X POST $ENDPOINT/a2a -H 'Content-Type: application/json' -d \
+  curl -s -X POST $ENDPOINT/a2a -H 'Content-Type: application/json' -H 'X-GreenNode-AgentBase-User-Id: guest-1' -d \
     '{"jsonrpc":"2.0","id":"1","method":"message/send","params":{"message":{"kind":"message","messageId":"m1","role":"user","parts":[{"kind":"text","text":"Quán mở cửa đến mấy giờ?"}]}}}' | jq -r '.result.parts[0].text'
   ```
-- Unit tests: `tests/test_a2a.py`.
+- Unit tests: `tests/test_a2a.py`, `tests/test_memory_headers.py`.
 
 ## 📊 Observability — LangFuse v4 (OTel SDK)
 
@@ -166,12 +180,15 @@ Mọi turn (chat + webhook + A2A) được trace bằng **LangFuse SDK v4** (`la
 
 | Guard | How |
 |---|---|
+| **Runtime Security Settings** | in the Portal runtime's *Security Settings*: **IP Access Control** (allowed source CIDRs; empty = allow all) + **Inbound Identity** (IAM Permissions or JWT). *No authorization* leaves the endpoint open to anyone with the URL — not for production. ⚠️ Zalo's webhook calls carry no GreenNode token, so enforcing IAM/JWT on the whole runtime blocks it; for the Zalo-first deployment rely on the Zalo secret (below) + IP Access Control, and verify the setup with GreenNode |
+| **Memory headers validated** | `X-GreenNode-AgentBase-User-Id` / `-Session-Id` are required on `/invocations` and `X-GreenNode-AgentBase-User-Id` on `/a2a` → `400` if missing (no silent defaults → no cross-guest memory mixing). The Zalo webhook derives actor/session from Zalo's `sender_id` / `chat_id` |
 | **Fast webhook ack** | the webhook returns `200` instantly and processes the LLM turn in a background thread — Zalo never times out or retries while the LLM is thinking |
 | **Retry-safe dedupe** | `message_id` is marked seen *before* processing, so a Zalo retry during a slow turn is still dropped |
 | **Zalo secret** | `X-Bot-Api-Secret-Token` is verified on every event; wrong secret → `403` |
 | **Zalo-first mode** | `SERVE_UI=false` disables the web simulator on the endpoint — guests interact only in Zalo |
 | **API key on REST** | set `AGENT_API_KEY` → `/invocations` + `/api/*` require `X-API-Key` (the webhook is exempt — it has its own secret) |
 | **Hide runtime identity** | keep `DEBUG_OPS=0` (default) — `whoami` is disabled after policy setup |
+| **Policy Group on the gateway** | only this runtime's principal may call `restaurant__*` (first match wins; no match → 403) |
 | **Data persistence** | the MCP server stores bookings/loyalty in SQLite — runtime restarts keep data |
 | **Clean 2000-char replies** | long replies are cut at paragraph/line boundaries (never mid-markdown) with a "(…còn tiếp)" note |
 | **Context budget** | history trimmed to the last 40 messages; gateway calls retry with backoff; `recall` degrades gracefully |

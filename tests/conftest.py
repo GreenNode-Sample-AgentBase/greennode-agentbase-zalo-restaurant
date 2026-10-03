@@ -14,5 +14,7 @@ os.environ.setdefault("MCP_RESTAURANT_URL", "https://gw.example/restaurant")
 
 BACKEND = Path(__file__).resolve().parent.parent / "src" / "backend"
 MCP_SERVER = Path(__file__).resolve().parent.parent / "src" / "mcp-server"
-sys.path.insert(0, str(BACKEND))
+# BACKEND phải đứng TRƯỚC trên sys.path: cả hai thư mục đều có main.py,
+# `import main` trong test phải trỏ tới src/backend/main.py.
 sys.path.insert(0, str(MCP_SERVER))
+sys.path.insert(0, str(BACKEND))

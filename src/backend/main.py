@@ -32,6 +32,7 @@ from starlette.staticfiles import StaticFiles
 
 from greennode_agentbase import (
     GreenNodeAgentBaseApp,
+    GreenNodeRequestError,
     RequestContext,
     PingStatus,
 )
@@ -154,7 +155,7 @@ def _get_user_id(context) -> str:
     req = getattr(context, "request", None)
     if req is not None:
         try:
-            return req.headers.get("X-GreenNode-AgentBase-User-Id", "") or ""
+            return req.headers.get(USER_HEADER, "") or ""
         except Exception:
             return ""
     return ""
@@ -269,9 +270,24 @@ async def _a2a_route(request: Request):
              "error": {"code": -32602, "message": "params.message.parts không có text"}}
         )
     msg = (body.get("params") or {}).get("message") or {}
-    ctx = msg.get("contextId") or f"a2a-{uuid.uuid4().hex[:12]}"
+    # Memory actor = user thật từ header runtime (không dùng actor mặc định chung "a2a"
+    # — sẽ trộn memory giữa các caller). Thiếu header → 400.
+    a2a_user = request.headers.get(USER_HEADER, "").strip()
+    if not a2a_user:
+        return JSONResponse(
+            {"jsonrpc": "2.0", "id": rid,
+             "error": {"code": -32602, "message": MISSING_A2A_USER_MSG}},
+            status_code=400,
+        )
+    # contextId (A2A) = thread_id: ưu tiên contextId của message, rồi header Session-Id
+    # của runtime; chưa có → sinh mới (hội thoại mới, không dùng chung).
+    ctx = (
+        msg.get("contextId")
+        or request.headers.get(SESSION_HEADER, "").strip()
+        or f"a2a-{uuid.uuid4().hex[:12]}"
+    )
     result = await asyncio.to_thread(
-        run_coro, _chat_turn("a2a", ctx, text, trace_name="a2a-zalo-turn")
+        run_coro, _chat_turn(a2a_user, ctx, text, trace_name="a2a-zalo-turn")
     )
     if result.get("status") != "success":
         return JSONResponse(
@@ -291,6 +307,25 @@ async def _a2a_route(request: Request):
     })
 
 
+USER_HEADER = "X-GreenNode-AgentBase-User-Id"
+SESSION_HEADER = "X-GreenNode-AgentBase-Session-Id"
+MISSING_A2A_USER_MSG = (
+    "Thiếu header X-GreenNode-AgentBase-User-Id (memory actor) — A2A caller phải đi qua "
+    "AgentBase Runtime (header tự gắn) hoặc tự gửi header này."
+)
+MISSING_HEADERS_MSG = (
+    "Thiếu headers bắt buộc: X-GreenNode-AgentBase-User-Id và "
+    "X-GreenNode-AgentBase-Session-Id (để tách bộ nhớ theo user/session). "
+    "Không có giá trị mặc định — tránh trộn dữ liệu giữa các user."
+)
+
+
+def _missing_identity(user_id: str, session_id: str) -> bool:
+    """True nếu thiếu user/session id (khuyến nghị docs: KHÔNG fallback default,
+    memory path phải trả lỗi rõ ràng khi thiếu headers)."""
+    return not (user_id or "").strip() or not (session_id or "").strip()
+
+
 @app.entrypoint
 def handler(payload: dict, context: RequestContext) -> dict:
     if payload.get("op") == "whoami":
@@ -301,14 +336,9 @@ def handler(payload: dict, context: RequestContext) -> dict:
             }
         return {"status": "success", "agent": "zalo-restaurant-bot", **agent_mod.whoami()}
     user_id = _get_user_id(context)
-    if not user_id or not context.session_id:
-        return {
-            "status": "error",
-            "error": (
-                "Thiếu headers bắt buộc: X-GreenNode-AgentBase-User-Id và "
-                "X-GreenNode-AgentBase-Session-Id."
-            ),
-        }
+    if _missing_identity(user_id, context.session_id):
+        # SDK map GreenNodeRequestError(status_code=400) → HTTP 400 (không fallback default)
+        raise GreenNodeRequestError(MISSING_HEADERS_MSG, status_code=400)
     message = payload.get("message") or payload.get("input") or "Hello"
     return run_coro(_chat_turn(user_id, context.session_id, message))
 

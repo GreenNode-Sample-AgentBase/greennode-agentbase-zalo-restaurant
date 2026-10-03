@@ -193,10 +193,3 @@ async def add_chat_events(actor_id: str, session_id: str, user_text: str, bot_te
             ),
         )
 
-
-def add_chat_events_sync(actor_id: str, session_id: str, user_text: str, bot_text: str) -> None:
-    """Wrapper sync cho handler (thread ngoài loop) — lỗi bị nuốt (history phụ)."""
-    try:
-        run_coro(add_chat_events(actor_id, session_id, user_text, bot_text))
-    except Exception:
-        pass  # history là tiện ích phụ — không làm fail chat

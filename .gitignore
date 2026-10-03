@@ -4,3 +4,4 @@ __pycache__/
 .env.local
 !.env.example
 .greennode.json
+src/mcp-server/data/
