@@ -1,8 +1,4 @@
 """A2A protocol (agent card + JSON-RPC message/send) — unit tests, không cần mạng."""
-import uuid
-
-import pytest
-
 
 # ── agent card (discovery: GET /.well-known/agent-card.json) ──
 def test_a2a_card_shape():

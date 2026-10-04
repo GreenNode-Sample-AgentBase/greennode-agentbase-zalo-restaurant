@@ -1,0 +1,45 @@
+# Public webhook proxy (Caddy) on a vServer with a public IP in the customer VPC public subnet.
+#
+#   cp .env.example .env     # set WEBHOOK_DOMAIN and RUNTIME_UPSTREAM
+#   docker compose up -d --build
+#
+# Security group: inbound TCP 80 and 443 from 0.0.0.0/0 (80 is only for the ACME challenge and is
+# answered by Caddy; with your own certificate you can close 80), SSH only from the VPN range.
+name: zalo-webhook-proxy
+
+services:
+  proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: zalo-webhook-proxy:latest
+    restart: unless-stopped
+    environment:
+      WEBHOOK_DOMAIN: ${WEBHOOK_DOMAIN:?set WEBHOOK_DOMAIN in .env}
+      RUNTIME_UPSTREAM: ${RUNTIME_UPSTREAM:?set RUNTIME_UPSTREAM in .env}
+      MAX_BODY: ${MAX_BODY:-64KB}
+      RATE_EVENTS: ${RATE_EVENTS:-300}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data        # certificates: keep this volume, or you hit ACME rate limits
+      - caddy_config:/config
+      # Own certificate instead of ACME: mount it and enable the `tls` line in the Caddyfile.
+      # - ./certs:/certs:ro
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+volumes:
+  caddy_data:
+  caddy_config:

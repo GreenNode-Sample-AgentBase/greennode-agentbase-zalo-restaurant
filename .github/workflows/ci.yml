@@ -22,3 +22,5 @@ jobs:
         run: pytest -q
       - name: Syntax check frontend
         run: node --check src/frontend/app.js
+      - name: Syntax check deploy scripts
+        run: bash -n deploy/check_connectivity.sh

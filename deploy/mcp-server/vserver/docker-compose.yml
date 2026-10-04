@@ -1,0 +1,73 @@
+# Restaurant MCP server on a GreenNode vServer inside the customer VPC (private subnet).
+#
+#   cp .env.example .env            # set MCP_API_KEYS, CADDY_SITE and TLS_BIND_ADDR
+#   docker compose --profile tls up -d --build      # HTTPS on the private IP, port 8443 (the connector URL)
+#   docker compose up -d --build                    # plain HTTP only: unverified alternative, see the README
+#
+# The build context is src/mcp-server (the MCP server image only). SQLite lives on the
+# named volume `mcp_data` mounted at /app/data, so recreating the container keeps the data.
+name: restaurant-mcp
+
+services:
+  mcp:
+    build:
+      context: ../../../src/mcp-server
+      dockerfile: Dockerfile
+    # To use an image from Container Registry instead of building: set MCP_IMAGE in .env, then
+    #   docker login vcr.vngcloud.vn && docker compose pull && docker compose up -d
+    image: ${MCP_IMAGE:-restaurant-mcp-server:latest}
+    restart: unless-stopped
+    environment:
+      PORT: "8080"
+      MCP_DB_PATH: /app/data/restaurant.db
+      # Fail-closed: the compose file refuses to start without a key.
+      MCP_API_KEYS: ${MCP_API_KEYS:?set MCP_API_KEYS in .env (openssl rand -hex 32)}
+    ports:
+      # Default 127.0.0.1: with the TLS profile only Caddy (HTTPS :8443) is reachable from the network.
+      # For the plain-HTTP alternative set MCP_BIND_ADDR to the vServer PRIVATE IP (never 0.0.0.0);
+      # the security group must still restrict the source to the gateway range.
+      - "${MCP_BIND_ADDR:-127.0.0.1}:${MCP_PORT:-8080}:8080"
+    volumes:
+      - mcp_data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      # python:3.12-slim has no curl, so the check uses python.
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).status == 200 else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # TLS terminator (enable with `--profile tls`): the connector URL is https://<private-ip>:8443/mcp.
+  # Caddy keeps the plain MCP port on loopback.
+  caddy:
+    profiles: ["tls"]
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      mcp:
+        condition: service_healthy
+    environment:
+      CADDY_SITE: ${CADDY_SITE:-}
+    ports:
+      - "${TLS_BIND_ADDR:-127.0.0.1}:${TLS_PORT:-8443}:8443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      # To use an enterprise-CA certificate instead of `tls internal`: mount it here and
+      # change the `tls` line in the Caddyfile.
+      # - ./certs:/certs:ro
+
+volumes:
+  mcp_data:
+  caddy_data:

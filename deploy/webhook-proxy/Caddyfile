@@ -1,0 +1,67 @@
+# Public webhook proxy for the Zalo Restaurant bot.
+#
+# Exposes ONLY `POST /webhook/zalo` to the Internet and forwards it to the Private-mode Agent
+# Runtime. Every other method/path returns 404. The agent still verifies Zalo's secret header
+# (X-Bot-Api-Secret-Token), so this proxy is a narrow door, not the authentication.
+#
+# Environment (see .env.example):
+#   WEBHOOK_DOMAIN    public DNS name of this proxy (certificate is issued for it)
+#   RUNTIME_UPSTREAM  private endpoint of the runtime, e.g. http://<runtime-private-endpoint>:8080 (verify with GreenNode)
+#   MAX_BODY          request size limit (default 64KB)
+#   RATE_EVENTS       allowed requests per minute per client IP (default 300)
+{
+	# The rate_limit directive comes from the caddy-ratelimit module (see Dockerfile).
+	order rate_limit before basicauth
+
+	servers {
+		protocols h1 h2
+	}
+}
+
+{$WEBHOOK_DOMAIN} {
+	# TLS: with a public DNS name Caddy obtains and renews a certificate automatically (ACME).
+	# This needs inbound 80/443 from the Internet. To use your own certificate instead:
+	# tls /certs/fullchain.pem /certs/privkey.pem
+
+	# Only POST /webhook/zalo is forwarded.
+	@zalo {
+		method POST
+		path /webhook/zalo
+	}
+
+	handle @zalo {
+		request_body {
+			max_size {$MAX_BODY:64KB}
+		}
+
+		rate_limit {
+			zone per_ip {
+				key {remote_host}
+				events {$RATE_EVENTS:300}
+				window 1m
+			}
+		}
+
+		reverse_proxy {$RUNTIME_UPSTREAM} {
+			# The runtime endpoint may be routed by Host header: send the upstream host, not the
+			# public name. Verify what the Private runtime endpoint expects.
+			header_up Host {upstream_hostport}
+			transport http {
+				dial_timeout 5s
+				response_header_timeout 30s
+			}
+		}
+	}
+
+	# Everything else: 404, no hint about what exists behind the proxy.
+	handle {
+		respond "Not Found" 404
+	}
+
+	header -Server
+
+	log {
+		output stdout
+		format json
+	}
+}

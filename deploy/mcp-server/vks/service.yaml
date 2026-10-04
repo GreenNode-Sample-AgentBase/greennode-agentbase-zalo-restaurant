@@ -1,0 +1,41 @@
+# Service the Private MCP Gateway calls (from the AgentBase VPC) through an INTERNAL load balancer
+# in the customer VPC. It must never be exposed to the Internet.
+apiVersion: v1
+kind: Service
+metadata:
+  name: restaurant-mcp-server
+  namespace: restaurant-mcp
+  labels:
+    app: restaurant-mcp-server
+  # TODO: add the annotation that makes the GreenNode load balancer INTERNAL (and selects its
+  # subnet), per the GreenNode vLB / VKS documentation. Do not guess the annotation name: the
+  # public VKS docs reviewed for this sample document `vks.vngcloud.vn/load-balancer-id` and
+  # `vks.vngcloud.vn/certificate-ids` (Ingress) but no internal-LB annotation for Services.
+  # Without it the load balancer may be created with a public address.
+  # annotations:
+  #   <annotation-internal-lb>: "<value>"
+spec:
+  type: LoadBalancer
+  selector:
+    app: restaurant-mcp-server
+  ports:
+    - name: http
+      port: 8080            # plain HTTP inside the VPC. The connector URL is HTTPS: terminate TLS at the
+                            # internal LB / ingress and expose it as https://<internal-lb-ip>:<port>/mcp
+      targetPort: http
+      protocol: TCP
+
+# ---------------------------------------------------------------------------
+# Alternative: NodePort (when no internal LB is available yet). Replace `type: LoadBalancer`
+# above with NodePort and point the connector at a worker node's PRIVATE IP:
+# http://<node-private-ip>:30080/mcp. The node security group must allow the gateway source
+# range to port 30080 only.
+#
+#   spec:
+#     type: NodePort
+#     ports:
+#       - name: http
+#         port: 8080
+#         targetPort: http
+#         nodePort: 30080     # default range 30000-32767
+# ---------------------------------------------------------------------------

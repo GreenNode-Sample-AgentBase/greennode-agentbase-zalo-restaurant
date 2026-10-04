@@ -1,0 +1,26 @@
+# Optional: only accept ingress to port 8080 from the AgentBase VPC (172.30.0.0/16) and from the
+# customer ranges you add below. Requires a CNI that enforces NetworkPolicy.
+# If the load balancer or kube-proxy source-NATs traffic, pods see the LB or node address instead
+# of 172.30.0.0/16: add that subnet to the ipBlock list. Verify the visible source with GreenNode.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: restaurant-mcp-allow-gateway
+  namespace: restaurant-mcp
+spec:
+  podSelector:
+    matchLabels:
+      app: restaurant-mcp-server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 172.30.0.0/16
+        # - ipBlock:
+        #     cidr: <internal LB / node subnet CIDR>   # when source NAT is applied
+        # - ipBlock:
+        #     cidr: <VPN client or admin range>        # for check_connectivity.sh runs
+      ports:
+        - protocol: TCP
+          port: 8080

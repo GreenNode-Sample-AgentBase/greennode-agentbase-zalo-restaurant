@@ -1,0 +1,18 @@
+# Persistent volume for the SQLite database (/app/data/restaurant.db).
+# ReadWriteOnce is enough: the server runs as ONE replica (SQLite has a single writer).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: restaurant-mcp-data
+  namespace: restaurant-mcp
+  labels:
+    app: restaurant-mcp-server
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  # TODO: set the StorageClass of your VKS cluster (`kubectl get storageclass`). Leave it out to
+  # use the cluster default. Verify with GreenNode that the class supports ReadWriteOnce block volumes.
+  # storageClassName: <storage-class>

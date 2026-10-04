@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: restaurant-mcp-server
+  namespace: restaurant-mcp
+  labels:
+    app: restaurant-mcp-server
+spec:
+  # One replica: SQLite on a ReadWriteOnce volume. `Recreate` avoids two pods fighting over the
+  # volume during a rollout.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: restaurant-mcp-server
+  template:
+    metadata:
+      labels:
+        app: restaurant-mcp-server
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001            # makes the PVC writable for the non-root user
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mcp
+          # Image pushed to Container Registry (see README). For a private repository create an
+          # imagePullSecret and uncomment imagePullSecrets below.
+          image: vcr.vngcloud.vn/<repo>/zalo-mcp-server:v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: MCP_DB_PATH
+              value: /app/data/restaurant.db
+          envFrom:
+            - secretRef:
+                name: restaurant-mcp-secret   # contains MCP_API_KEYS
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: restaurant-mcp-data
+        - name: tmp
+          emptyDir: {}
+      # imagePullSecrets:
+      #   - name: vcr-pull-secret

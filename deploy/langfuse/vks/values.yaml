@@ -1,0 +1,116 @@
+# Helm values for the official Langfuse chart (https://langfuse.github.io/langfuse-k8s),
+# pinned to chart 1.5.41 (appVersion 3.224.1, the Langfuse v3 line). Chart 2.x installs Langfuse v4.
+#
+#   helm repo add langfuse https://langfuse.github.io/langfuse-k8s && helm repo update
+#   helm upgrade --install langfuse langfuse/langfuse --version 1.5.41 -n langfuse -f values.yaml
+#
+# Key paths below were checked against the chart's values.yaml and templates at tag
+# langfuse-1.5.41. Items marked UNVERIFIED depend on your cluster or on GreenNode and could
+# not be validated offline. Run `helm template ... -f values.yaml` before installing.
+#
+# All secrets come from an EXISTING Kubernetes Secret (secrets.example.yaml documents the
+# keys). Nothing sensitive is stored in this file.
+
+global:
+  security:
+    # Chart default: the bitnami subcharts use `bitnamilegacy/*` images (Bitnami moved the
+    # versioned images). Review this for your supply-chain policy (see the chart README).
+    allowInsecureImages: true
+
+langfuse:
+  # Anonymous usage statistics off for a private deployment.
+  features:
+    telemetryEnabled: false
+    # Set to true after the first admin account is created, then `helm upgrade`.
+    signUpDisabled: false
+
+  nextauth:
+    # URL admins open over the VPN. Set to the internal LB private IP or an internal DNS name
+    # once you know it (see README step 5), e.g. http://10.20.2.30:3000. Must match the browser URL.
+    url: http://langfuse.example.internal:3000
+    secret:
+      secretKeyRef:
+        name: langfuse-secrets
+        key: nextauth-secret
+  salt:
+    secretKeyRef:
+      name: langfuse-secrets
+      key: salt
+  encryptionKey:
+    secretKeyRef:
+      name: langfuse-secrets
+      key: encryption-key
+
+  # NO public ingress. The UI and ingestion endpoint are exposed only through the INTERNAL
+  # load balancer defined in internal-lb-service.yaml (or an internal ingress you configure).
+  ingress:
+    enabled: false
+    # If you prefer the documented VKS ingress (ingressClassName "vngcloud", ALB), it must be an
+    # internal ALB. UNVERIFIED: the public docs reviewed describe `vks.vngcloud.vn/load-balancer-id`
+    # (reuse an existing ALB) and TLS on 443 but do not document how to make an ingress ALB internal.
+
+  web:
+    service:
+      # ClusterIP on purpose: a LoadBalancer without the internal annotation may get a public
+      # address. internal-lb-service.yaml adds the internal LB explicitly.
+      type: ClusterIP
+      port: 3000
+    # Probes use /api/public/health and /api/public/ready (chart defaults).
+
+  # Starting resources, from the chart README sizing guidance (UNVERIFIED for your load: see
+  # https://langfuse.com/self-hosting/scaling).
+  resources:
+    requests:
+      cpu: "1"
+      memory: 2Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+
+postgresql:
+  deploy: true
+  auth:
+    username: langfuse
+    existingSecret: langfuse-secrets
+    secretKeys:
+      userPasswordKey: postgres-password
+      adminPasswordKey: postgres-admin-password
+    database: postgres_langfuse
+  primary:
+    persistence:
+      size: 20Gi
+      # storageClass: <storage-class>        # TODO: your VKS StorageClass (UNVERIFIED)
+
+clickhouse:
+  deploy: true
+  # Single node. The chart defaults to 3 replicas + ZooKeeper (HA); the chart switches Langfuse to
+  # non-cluster mode automatically when replicaCount is 1. UNVERIFIED sizing: adjust for your load.
+  replicaCount: 1
+  resourcesPreset: large
+  zookeeper:
+    enabled: false
+  auth:
+    existingSecret: langfuse-secrets
+    existingSecretKey: clickhouse-password
+  persistence:
+    size: 50Gi
+    # storageClass: <storage-class>        # TODO (UNVERIFIED)
+
+redis:
+  deploy: true
+  auth:
+    existingSecret: langfuse-secrets
+    existingSecretPasswordKey: redis-password
+  primary:
+    persistence:
+      size: 2Gi
+
+s3:
+  deploy: true            # MinIO subchart; keep it internal. Use an S3-compatible service instead if you have one.
+  auth:
+    existingSecret: langfuse-secrets
+    rootUserSecretKey: s3-root-user
+    rootPasswordSecretKey: s3-root-password
+  persistence:
+    size: 20Gi
+    # storageClass: <storage-class>        # TODO (UNVERIFIED)

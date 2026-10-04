@@ -5,3 +5,8 @@ __pycache__/
 !.env.example
 .greennode.json
 src/mcp-server/data/
+# deployment secrets and local artifacts
+deploy/**/.env
+deploy/**/certs/
+deploy/**/secret.yaml
+deploy/**/backups/

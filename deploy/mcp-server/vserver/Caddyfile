@@ -1,0 +1,20 @@
+# TLS reverse proxy for the MCP server (only used with `docker compose --profile tls`).
+# CADDY_SITE = the vServer private IP (or an internal hostname) the connector URL uses.
+{
+	# No public ACME certificate: the vServer sits in a private network.
+	auto_https disable_redirects
+}
+
+https://{$CADDY_SITE}:8443 {
+	# Certificate issued by Caddy's internal CA. The gateway must trust this CA; how to supply
+	# a custom CA to a connector is not documented: verify with GreenNode.
+	tls internal
+
+	# Or use a certificate from an enterprise CA the gateway trusts (mount ./certs in compose):
+	# tls /certs/server.crt /certs/server.key
+
+	reverse_proxy mcp:8080 {
+		# MCP streamable HTTP: flush immediately, do not buffer.
+		flush_interval -1
+	}
+}
